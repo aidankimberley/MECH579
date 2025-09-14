@@ -14,10 +14,10 @@ import pandas as pd
 #%%
 #Bisection Method
 
-f1 = lambda x: x**2 -4*x+4 - np.log(x) #function to find the root of
-f = lambda x: x+1-2*np.sin(np.pi*x)
-a = 0.5 #left endpoint
-b = 1 #right endpoint
+f = lambda x: x**2 -4*x+4 - np.log(x) #function to find the root of
+f2 = lambda x: x+1-2*np.sin(np.pi*x)
+a = 1 #left endpoint
+b = 2 #right endpoint
 eps = 10e-5 #tolerance
 x0 = a
 
@@ -80,8 +80,8 @@ print(df.to_string(index=False))
 
 #%%
 #Fixed Point Iteration
-g1 = lambda x: 2 - np.sqrt(np.log(x))
-g = lambda x: 1/np.pi*np.arcsin((x+1)/2)
+g = lambda x: 2 - np.sqrt(np.log(x))
+g2 = lambda x: 1/np.pi*np.arcsin((x+1)/2)
 g3 = lambda x: 2*np.sin(np.pi*x) - 1
 
 
@@ -133,8 +133,8 @@ print(df.to_string(index=False))
 
 #%%
 #Newton's Method
-f_prime1 = lambda x: 2*x -4 -1/x
-f_prime = lambda x: 1 - 2*np.pi*np.cos(np.pi*x)
+f_prime = lambda x: 2*x -4 -1/x
+f_prime2 = lambda x: 1 - 2*np.pi*np.cos(np.pi*x)
 
 def newtons_method(f, f_prime, x0, eps):
     x = x0
