@@ -222,22 +222,4 @@ if __name__ == "__main__":
     # Create visualizations
     plot_results(critical_points)
     
-    # Analytical analysis
-    print("\nANALYTICAL ANALYSIS")
-    print("=" * 50)
-    print("Setting gradient to zero:")
-    print("∂f/∂x = 2x - 2xy + y² = 0")
-    print("∂f/∂y = 3y² - x² + 2xy = 0")
-    print()
-    print("From ∂f/∂x = 0: 2x(1-y) + y² = 0")
-    print("Case 1: x = 0 → y² = 0 → y = 0 → Critical point: (0,0)")
-    print("Case 2: x ≠ 0 → 2(1-y) + y²/x = 0")
-    print()
-    print("From ∂f/∂y = 0: 3y² - x² + 2xy = 0")
-    print("At (0,0): ∂f/∂y = 0 ✓")
-    print()
-    print("Let's check other cases...")
-    print("If y = 2/3, then from ∂f/∂x = 0: 2x(1/3) + 4/9 = 0 → x = -2/3")
-    print("Checking ∂f/∂y at (-2/3, 2/3): 3(4/9) - 4/9 + 2(-2/3)(2/3) = 12/9 - 4/9 - 8/9 = 0 ✓")
-    print("So (-2/3, 2/3) is also a critical point.")
-    
+  
