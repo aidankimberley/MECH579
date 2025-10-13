@@ -2,7 +2,7 @@
 #imports
 import numpy as np
 import matplotlib.pyplot as plt
-
+import scipy.optimize
 
 
 #minimize the rosenbrock function
@@ -20,17 +20,24 @@ grad_rosenbrock = lambda x: np.array([-2*(1-x[0]) - 400*(x[1]-x[0]**2)*x[0], 200
 hess_rosenbrock = lambda x: np.array([[2-400*(x[1]-x[0]**2) + 800*x[0]**2, -400*x[0]],
                                          [-400*x[0],                        200]])
 
-def alpha_backtracking(func,grad_func,pk,xk,alpha=0.5,c=0.5,rho=0.8,max_iter=100):
-    i=0
-    while func(xk+alpha*pk) >= func(xk) + c*alpha*grad_func(xk).T@pk:
-        alpha = rho*alpha
-        i+=1
+def alpha_backtracking(func, grad_func, pk, xk, alpha=1.0, c=1e-4, rho=0.8, max_iter=100, alpha_min=1e-6):
+    i = 0
+    gk = grad_func(xk)
+    if gk.T @ pk >= 0:
+        pk = -gk  # ensure descent direction
+
+    while func(xk + alpha * pk) > func(xk) + c * alpha * gk.T @ pk and alpha > alpha_min:
+        alpha *= rho
+        i += 1
         if i > max_iter:
             print(f"Alpha backtracking did not converge in {max_iter} iterations at {xk}")
             return alpha
     return alpha
 
-def steepest_descent(x0,func,grad_func,tol=1e-6,max_iter=30000):
+
+
+
+def steepest_descent(x0,func,grad_func,tol=1e-6,max_iter=50000, alpha=1.0, c=10e-4, rho=0.8):
     xk = x0
     grad_history = [np.linalg.norm(grad_func(xk))]
     path_history = [xk.copy()]
@@ -39,7 +46,7 @@ def steepest_descent(x0,func,grad_func,tol=1e-6,max_iter=30000):
             print(f"Iteration {i}: xk = {xk}, grad norm = {np.linalg.norm(grad_func(xk))}")
         pk = -grad_func(xk)
         grad_history.append(np.linalg.norm(grad_func(xk)))
-        alpha = alpha_backtracking(func,grad_func,pk,xk)
+        alpha = alpha_backtracking(func,grad_func,pk,xk,alpha=alpha,c=c,rho=rho,max_iter=1000)
         xk = xk + alpha*pk
         path_history.append(xk.copy())
         if np.linalg.norm(grad_func(xk)) < tol:
@@ -72,7 +79,7 @@ def nonlin_conj_grad(x0, func, grad_func, tol=1e-6, max_iter=30000):
     return xk,i,grad_history,path_history
 
 
-def quasi_newton_bfgs(x0, func, grad_func, tol=1e-6, max_iter=3000):
+def quasi_newton_bfgs(x0, func, grad_func, tol=1e-6, max_iter=3000, alpha=1.0, c=1e-4, rho=0.8):
     #H represents inverse of the Hessian
     xk = x0
     gk = grad_func(xk)
@@ -159,8 +166,6 @@ def plot_contour_with_path(func, path_history, title, x_range=(-2, 4), y_range=(
     ax.plot(path_array[-1, 0], path_array[-1, 1], 'r*', markersize=15, 
             label=f'End: ({path_array[-1, 0]:.3f}, {path_array[-1, 1]:.3f})')
     
-    # Mark optimum at (1,1)
-    ax.plot(1, 1, 'b*', markersize=15, label='True Optimum (1, 1)')
     
     ax.set_xlabel('x1')
     ax.set_ylabel('x2')
@@ -170,62 +175,64 @@ def plot_contour_with_path(func, path_history, title, x_range=(-2, 4), y_range=(
     plt.tight_layout()
     plt.show()
 
-#%%
-#steepest descent
-x0 = np.array([2.0, 2.0])
-xk,i,grad_history,path_history = steepest_descent(x0,rosenbrock,grad_rosenbrock)
+if __name__ == "__main__":
+    #%%
+    #steepest descent
+    x0 = np.array([2.0, 2.0])
 
-#plot log(grad_history) vs iteration
-plt.plot(np.log(grad_history))
-plt.xlabel("Iteration")
-plt.ylabel("Log(Gradient Norm)")
-plt.title("Steepest Descent")
-plt.show()
+    xk,i,grad_history,path_history = steepest_descent(x0,rosenbrock,grad_rosenbrock)
 
-#plot contour with path
-plot_contour_with_path(rosenbrock, path_history, "Steepest Descent")
+    #plot log(grad_history) vs iteration
+    plt.plot(np.log(grad_history))
+    plt.xlabel("Iteration")
+    plt.ylabel("Log(Gradient Norm)")
+    plt.title("Steepest Descent")
+    plt.show()
 
-#%%
-#nonlinear conjugate gradient
-x0 = np.array([2.0, 2.0])
-xk,i,grad_history,path_history = nonlin_conj_grad(x0,rosenbrock,grad_rosenbrock)
+    #plot contour with path
+    plot_contour_with_path(rosenbrock, path_history, "Steepest Descent")
 
-#plot log(grad_history) vs iteration
-plt.plot(np.log(grad_history))
-plt.xlabel("Iteration")
-plt.ylabel("Log(Gradient Norm)")
-plt.title("Nonlinear Conjugate Gradient")
-plt.show()
+    #%%
+    #nonlinear conjugate gradient
+    x0 = np.array([2.0, 2.0])
+    xk,i,grad_history,path_history = nonlin_conj_grad(x0,rosenbrock,grad_rosenbrock)
 
-#plot contour with path
-plot_contour_with_path(rosenbrock, path_history, "Nonlinear Conjugate Gradient")
+    #plot log(grad_history) vs iteration
+    plt.plot(np.log(grad_history))
+    plt.xlabel("Iteration")
+    plt.ylabel("Log(Gradient Norm)")
+    plt.title("Nonlinear Conjugate Gradient")
+    plt.show()
 
-#%%
-#quasi newton
-x0 = np.array([2.0, 2.0])
-xk,i,grad_history,path_history = quasi_newton_bfgs(x0,rosenbrock,grad_rosenbrock)
+    #plot contour with path
+    plot_contour_with_path(rosenbrock, path_history, "Nonlinear Conjugate Gradient")
 
-#plot log(grad_history) vs iteration
-plt.plot(np.log(grad_history))
-plt.xlabel("Iteration")
-plt.ylabel("Log(Gradient Norm)")
-plt.title("Quasi-Newton BFGS")
-plt.show()
+    #%%
+    #quasi newton
+    x0 = np.array([2.0, 2.0])
+    xk,i,grad_history,path_history = quasi_newton_bfgs(x0,rosenbrock,grad_rosenbrock)
 
-#plot contour with path
-plot_contour_with_path(rosenbrock, path_history, "Quasi-Newton BFGS")
+    #plot log(grad_history) vs iteration
+    plt.plot(np.log(grad_history))
+    plt.xlabel("Iteration")
+    plt.ylabel("Log(Gradient Norm)")
+    plt.title("Quasi-Newton BFGS")
+    plt.show()
 
-#%%
-#newtons method
-x0 = np.array([2.0, 2.0])
-xk,i,grad_history,path_history = newtons_method(x0,rosenbrock,grad_rosenbrock,hess_rosenbrock)
+    #plot contour with path
+    plot_contour_with_path(rosenbrock, path_history, "Quasi-Newton BFGS")
 
-#plot log(grad_history) vs iteration
-plt.plot(np.log(grad_history))
-plt.xlabel("Iteration")
-plt.ylabel("Log(Gradient Norm)")
-plt.title("Newtons Method")
-plt.show()
+    #%%
+    #newtons method
+    x0 = np.array([2.0, 2.0])
+    xk,i,grad_history,path_history = newtons_method(x0,rosenbrock,grad_rosenbrock,hess_rosenbrock)
 
-#plot contour with path
-plot_contour_with_path(rosenbrock, path_history, "Newton's Method")
+    #plot log(grad_history) vs iteration
+    plt.plot(np.log(grad_history))
+    plt.xlabel("Iteration")
+    plt.ylabel("Log(Gradient Norm)")
+    plt.title("Newtons Method")
+    plt.show()
+
+    #plot contour with path
+    plot_contour_with_path(rosenbrock, path_history, "Newton's Method")
