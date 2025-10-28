@@ -1,0 +1,284 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{siunitx}
+
+% Code listing style
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny,
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{gray!10},
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    frame=single,
+    tabsize=2,
+    captionpos=b,
+    breaklines=true,
+    breakatwhitespace=false,
+    escapeinside={\%*}{*)}
+}
+
+\title{\textbf{MECH 597 Assignment 3: Constrained Optimization Methods}}
+\author{Aidan [Your Last Name]}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Abstract}
+This report presents a comparative analysis of two constrained optimization methods: Sequential Quadratic Programming (SQP) and the Quadratic Penalty Method. Both algorithms are applied to minimize the Rosenbrock function subject to different constraint configurations. The performance of each method is evaluated based on convergence behavior, computational efficiency, and solution quality.
+
+\section{Introduction}
+Constrained optimization is a fundamental problem in engineering and applied mathematics. This assignment explores two prominent approaches for solving nonlinear constrained optimization problems:
+
+\begin{itemize}
+    \item \textbf{Sequential Quadratic Programming (SQP)}: A method that solves a sequence of quadratic programming subproblems
+    \item \textbf{Quadratic Penalty Method}: A technique that converts constrained problems into unconstrained ones by adding penalty terms
+\end{itemize}
+
+The objective function considered is the Rosenbrock function:
+\begin{equation}
+f(x) = 100(x_2 - x_1^2)^2 + (1 - x_1)^2
+\end{equation}
+
+\section{Problem Formulation}
+
+\subsection{Constraint Configurations}
+Two constraint configurations are analyzed:
+
+\textbf{Constraint 1: Linear Constraint}
+\begin{equation}
+x_1 + x_2 = 1
+\end{equation}
+
+\textbf{Constraint 2: Nonlinear Constraint}
+\begin{equation}
+x_1^2 + x_2^2 = 1
+\end{equation}
+
+\subsection{Initial Conditions}
+Both algorithms start from the initial point:
+\begin{equation}
+x_0 = \begin{bmatrix} 10 \\ 4 \end{bmatrix}
+\end{equation}
+
+\section{Methodology}
+
+\subsection{Sequential Quadratic Programming (SQP)}
+SQP solves the constrained optimization problem by iteratively solving quadratic programming subproblems. At each iteration $k$, the algorithm:
+
+\begin{enumerate}
+    \item Computes the gradient and Hessian of the Lagrangian
+    \item Solves the quadratic programming subproblem
+    \item Updates the solution using a line search
+    \item Updates the Lagrange multipliers
+\end{enumerate}
+
+The KKT conditions are used for convergence criteria.
+
+\subsection{Quadratic Penalty Method}
+The quadratic penalty method transforms the constrained problem into an unconstrained one by adding penalty terms:
+
+\begin{equation}
+Q(x, \mu) = f(x) + \frac{\mu}{2} \sum_{i=1}^{m} c_i(x)^2
+\end{equation}
+
+where $\mu$ is the penalty parameter that increases during the optimization process.
+
+\section{Results}
+
+\subsection{Constraint 1: Linear Constraint ($x_1 + x_2 = 1$)}
+
+\begin{table}[H]
+\centering
+\caption{Results for Linear Constraint}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Method & Solution & Iterations \\
+\midrule
+SQP & $[0.6188, 0.3812]^T$ & 12 \\
+Quadratic Penalty & $[0.6188, 0.3812]^T$ & 79 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{sqp_constraint1_contour.png}
+    \caption{SQP Optimization Path}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{penalty_constraint1_contour.png}
+    \caption{Quadratic Penalty Optimization Path}
+\end{subfigure}
+\caption{Contour plots showing optimization paths for Constraint 1}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{convergence_comparison_constraint1.png}
+\caption{Convergence comparison for Constraint 1}
+\end{figure}
+
+\subsection{Constraint 2: Nonlinear Constraint ($x_1^2 + x_2^2 = 1$)}
+
+\begin{table}[H]
+\centering
+\caption{Results for Nonlinear Constraint}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Method & Solution & Iterations \\
+\midrule
+SQP & $[0.7864, 0.6177]^T$ & 10 \\
+Quadratic Penalty & $[0.7864, 0.6177]^T$ & 55 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{sqp_constraint2_contour.png}
+    \caption{SQP Optimization Path}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{penalty_constraint2_contour.png}
+    \caption{Quadratic Penalty Optimization Path}
+\end{subfigure}
+\caption{Contour plots showing optimization paths for Constraint 2}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{convergence_comparison_constraint2.png}
+\caption{Convergence comparison for Constraint 2}
+\end{figure}
+
+\section{Analysis and Discussion}
+
+\subsection{Convergence Behavior}
+Both algorithms successfully converged to similar solutions for both constraint configurations. The convergence plots show:
+
+\begin{itemize}
+    \item SQP demonstrates faster initial convergence
+    \item Quadratic Penalty method shows more gradual convergence
+    \item Both methods achieve similar final solution quality
+\end{itemize}
+
+\subsection{Computational Efficiency}
+\begin{itemize}
+    \item \textbf{SQP} requires fewer total iterations (12 vs 79 for Constraint 1, 10 vs 55 for Constraint 2)
+    \item \textbf{Quadratic Penalty} requires more iterations due to the penalty parameter updates
+    \item SQP is more computationally efficient per iteration but requires gradient and Hessian computations
+\end{itemize}
+
+\subsection{Solution Quality}
+Both methods converged to nearly identical solutions, indicating robust convergence behavior:
+\begin{itemize}
+    \item Constraint 1: Both methods found $x^* \approx [0.6188, 0.3812]^T$
+    \item Constraint 2: Both methods found $x^* \approx [0.7864, 0.6177]^T$
+\end{itemize}
+
+\subsection{Algorithm Characteristics}
+
+\textbf{SQP Advantages:}
+\begin{itemize}
+    \item Faster convergence
+    \item Direct handling of constraints
+    \item Good theoretical properties
+\end{itemize}
+
+\textbf{SQP Disadvantages:}
+\begin{itemize}
+    \item Requires second-order derivatives
+    \item More complex implementation
+    \item Potential numerical issues with Hessian
+\end{itemize}
+
+\textbf{Quadratic Penalty Advantages:}
+\begin{itemize}
+    \item Simpler implementation
+    \item Only requires first-order derivatives
+    \item Robust convergence properties
+\end{itemize}
+
+\textbf{Quadratic Penalty Disadvantages:}
+\begin{itemize}
+    \item Slower convergence
+    \item Requires tuning penalty parameters
+    \item May have numerical conditioning issues
+\end{itemize}
+
+\section{Conclusion}
+Both SQP and Quadratic Penalty methods successfully solved the constrained optimization problems. SQP demonstrated superior computational efficiency with fewer iterations, while the Quadratic Penalty method showed more gradual but reliable convergence. The choice between methods depends on the specific requirements of the application, including computational resources, derivative availability, and convergence speed requirements.
+
+\section{Code Implementation}
+The algorithms were implemented in Python using JAX for automatic differentiation and matplotlib for visualization. The complete implementation is available in the \texttt{SQP.py} file.
+
+\begin{lstlisting}[caption=Key Algorithm Components]
+# SQP Algorithm Structure
+def SQP(x0, lamb0, func, c_array, eps=1e-3, max_iter=200):
+    # Initialize
+    xk = x0.copy()
+    lamb = lamb0.copy()
+    
+    for i in range(max_iter):
+        # Compute gradients and Hessians
+        grad_f = grad_func(xk)
+        H_f = hess_func(xk)
+        
+        # Solve QP subproblem
+        # Update solution and multipliers
+        # Check convergence
+        
+    return xk, lamb
+
+# Quadratic Penalty Method Structure  
+def quadratic_penalty(x0, func, c_array, mu0=1.0):
+    xk = x0.copy()
+    mu = mu0
+    
+    for outer_iter in range(max_iter):
+        # Define penalized objective
+        def penalized_objective(x):
+            penalty = sum(c(x)**2 for c in c_array)
+            return func(x) + mu/2 * penalty
+            
+        # Solve unconstrained subproblem
+        # Update penalty parameter
+        
+    return xk
+\end{lstlisting}
+
+\section{References}
+\begin{enumerate}
+    \item Nocedal, J., \& Wright, S. J. (2006). \textit{Numerical optimization}. Springer Science \& Business Media.
+    \item Boyd, S., \& Vandenberghe, L. (2004). \textit{Convex optimization}. Cambridge university press.
+    \item Gill, P. E., Murray, W., \& Wright, M. H. (2019). \textit{Practical optimization}. SIAM.
+\end{enumerate}
+
+\end{document}
