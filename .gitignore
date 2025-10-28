@@ -9,6 +9,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+venv/
+.venv/
 
 # macOS
 .DS_Store
@@ -22,10 +24,6 @@ build/
 *.swo
 *~
 
-# Test files
-test_*.py
-test_output.txt
-
 # LaTeX auxiliary files
 *.aux
 *.log
@@ -35,9 +33,15 @@ test_output.txt
 *.fls
 *.synctex.gz
 
-# PDFs (if you want to exclude assignment PDFs)
-*.pdf
+# Generated plots at root level (keep plots inside assignment folders)
+/*.png
 
-# Screenshots
-*.png
+# PDFs at root level (keep PDFs inside assignment folders if needed)
+/*.pdf
+
+# Shell scripts at root level
+activate_venv.sh
+
+# Requirements (optional - uncomment if you don't want to track)
+# requirements.txt
 

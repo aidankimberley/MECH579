@@ -1,0 +1,73 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{pmboxdraw}
+
+% Define colors for syntax highlighting
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+% Configure listings package for Python
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4,
+    language=Python,
+    literate={Δ}{$\Delta$}1,
+    extendedchars=true
+}
+
+\lstset{style=pythonstyle}
+
+% Fix header height
+\setlength{\headheight}{14pt}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Brequet Range Optimizer}
+\rhead{MECH597 - Assignment 2}
+\cfoot{Page \thepage\ of \pageref{LastPage}}
+
+\title{\textbf{MECH597 Assignment 2}\\Python Code Documentation}
+\author{Optimization Algorithms \& Brequet Range Analysis}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Line Search Optimizers}
+\subsection{Source Code: line\_search\_optimizers.py}
+
+\lstinputlisting[language=Python]{line_search_optimizers.py}
+
+\newpage
+\section{Brequet Range Optimizer}
+\subsection{Source Code: brequet\_range\_optimizer.py}
+
+\lstinputlisting[language=Python]{brequet_range_optimizer.py}
+
+\end{document}
