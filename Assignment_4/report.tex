@@ -1,0 +1,759 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{subcaption}
+
+\geometry{margin=1in}
+
+% Code listing style
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    frame=single,
+    breaklines=true,
+    showstringspaces=false
+}
+
+\title{MECH 579 Assignment 4: Optimization Methods\\
+\large Gradient-Based Optimization and Neural Network Surrogate Modeling}
+\author{Aidan Kimberley}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+
+
+\section{Introduction}
+
+This assignment explores two different approaches to optimization. The first approach involves traditional gradient-based optimization using automatic differentiation through JAX to compute gradients for the Rosenbrock function and maximizing aircraft range using the Brequet range equation with physical constraints. The second approach employs neural network surrogate modeling, where a neural network is trained to approximate complex objective functions and subsequently used for optimization.
+
+\section{Methodology}
+
+\subsection{Rosenbrock Function Optimization}
+
+The Rosenbrock function is a classic test problem for optimization algorithms, defined as:
+
+\begin{equation}
+f(x_1, x_2) = (1 - x_1)^2 + 100(x_2 - x_1^2)^2
+\end{equation}
+
+This function has a global minimum at $(1, 1)$ with $f(1, 1) = 0$. The optimization was performed with the constraint $g(x_1, x_2) = 1 - x_1^2 - x_2^2 \geq 0$, which restricts the search space to points within or on the unit circle.
+
+\subsubsection{Automatic Differentiation with JAX}
+
+JAX was used to compute gradients automatically, eliminating the need for analytical derivative calculations or inaccurate finite difference approaches. The implementation involved defining the Rosenbrock function and using JAX's gradient function to create a gradient computation function. This was done for the Range equation as well. This gradient function was then integrated with SciPy's SLSQP optimizer, which requires gradient information for efficient convergence. 
+
+\subsection{Brequet Range Equation Optimization}
+
+The Brequet range equation models aircraft range as a function of velocity $v$ and altitude $h$. The equation is given by:
+
+\begin{equation}
+R = \frac{v}{c_t} \cdot \frac{C_L}{C_D} \cdot \ln\left(\frac{W_i}{W_f}\right)
+\end{equation}
+
+where $c_t$ is the specific fuel consumption, $C_L$ and $C_D$ are lift and drag coefficients, and $W_i$ and $W_f$ are initial and final weights. The range depends on complex aerodynamic relationships including density variations with altitude, wave drag effects at high speeds, and the balance between lift and drag coefficients.
+
+\subsubsection{Constraints}
+
+The optimization was subject to physical constraints that ensure realistic aircraft operating conditions. The altitude constraint requires $h \leq 20,000$ m, representing the maximum operating altitude for typical aircraft. The velocity constraint requires $v \leq 150$ m/s, corresponding to approximately 540 km/h. Additionally, both velocity and altitude must be non-negative, ensuring physically meaningful solutions.
+
+
+
+\subsection{Neural Network Surrogate Modeling}
+
+A neural network was trained to approximate the Brequet range equation, creating a surrogate model for optimization. This approach is particularly valuable when the analytical objective function is expensive to evaluate or when gradients are difficult to compute analytically.
+
+\subsubsection{Network Architecture}
+
+The neural network architecture consists of an input layer with 2 neurons representing velocity and altitude, followed by 6 hidden layers with neuron counts of [50, 100, 100, 100, 100, 50], and a single output neuron representing the range. ReLU activation functions are used in all hidden layers to introduce non-linearity, while the output layer uses a linear activation to provide continuous range predictions. This deep architecture allows the network to capture the complex non-linear relationships present in the Brequet range equation.
+
+\subsubsection{Training Data}
+
+Training data was generated on a uniform grid covering the feasible operating region. Velocity samples ranged from 50 to 300 m/s with 70 samples, while altitude samples ranged from 1000 to 20000 m with 70 samples. This resulted in a total of 4,900 training samples, providing comprehensive coverage of the input space. The network was trained for 25,000 epochs using the Adam optimizer with a learning rate of 0.005, which provided a good balance between convergence speed and stability.
+
+\subsubsection{Optimization with Neural Network}
+
+The trained network was used in an optimization framework where the optimal solution is found through $x_{opt} = Wx_{initial} + b$, where $W$ and $b$ are the weights and bias of a linear transformation layer that are optimized to find the optimal $(v, h)$ pair. The neural network surrogate evaluates the objective function, and gradients are computed via automatic differentiation in PyTorch. This approach allows for efficient optimization while leveraging the smooth, differentiable nature of the neural network approximation.
+
+\section{Results}
+
+\subsection{Rosenbrock Function Optimization}
+
+The optimization converged successfully, demonstrating the effectiveness of automatic differentiation for gradient computation. Figure~\ref{fig:rosenbrock_grad} shows the gradient magnitude convergence, which exhibits a steady decrease indicating progress toward the optimal solution. Figure~\ref{fig:rosenbrock_path} displays the optimization path on the function contours, showing how the algorithm navigates the constrained search space toward the minimum.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/rosenbrock_gradient_convergence.png}
+\caption{Gradient magnitude convergence for Rosenbrock function optimization}
+\label{fig:rosenbrock_grad}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/rosenbrock_contour_path.png}
+\caption{Optimization path on Rosenbrock function contours}
+\label{fig:rosenbrock_path}
+\end{figure}
+
+\subsection{Brequet Range Equation Optimization}
+
+The gradient-based optimization successfully found an optimal solution for maximizing aircraft range. Figure~\ref{fig:range_grad} shows the gradient convergence, which demonstrates efficient convergence behavior. Figure~\ref{fig:range_constraint_conv} displays the convergence of both the range objective function and the constraint values as a function of design iterations, providing insight into how the optimization algorithm balances the objective with constraint satisfaction. Figure~\ref{fig:range_contour} displays the optimization path on the range equation contours, illustrating how the algorithm explores the feasible region to find the maximum range configuration. The initial guess was not in the feasible region which explains the nonlinear gradient convergence.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{plots/range_equation_optimization.png}
+\caption{Gradient magnitude convergence for Brequet range equation optimization}
+\label{fig:range_grad}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{plots/range_constraint_convergence.png}
+\caption{Convergence of range and constraints as a function of design iterations}
+\label{fig:range_constraint_conv}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/Range Optimization Path.png}
+\caption{Optimization path on Brequet range equation contours}
+\label{fig:range_contour}
+\end{figure}
+
+The optimal solution was found at approximately 150 m/s velocity and 11,261 m altitude. This solution shows that the velocity constraint was active and the altitude constraint was not. The convergence plot shows that the range increases steadily during optimization while all constraints remain satisfied throughout the process, with constraint values staying above zero as required for inequality constraints.
+
+\subsection{Neural Network Training}
+
+The neural network training converged successfully, as shown in Figure~\ref{fig:nn_loss}, which displays the loss history during training. The loss decreases steadily over the training epochs, indicating that the network is learning to approximate the Brequet range equation accurately.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/loss_history_objfunc.png}
+\caption{Neural network training loss history}
+\label{fig:nn_loss}
+\end{figure}
+
+\subsubsection{Surrogate Model Accuracy}
+
+The neural network surrogate was validated against the analytical objective function at several test points distributed throughout the feasible region. The differences between the neural network predictions and analytical values were found to be acceptably small, typically within a few percent of the true values. This demonstrates that the surrogate model somewhat accurately captures the behavior of the Brequet range equation across the operating region of interest.
+
+\subsubsection{Neural Network-Based Optimization}
+
+The optimization using the neural network surrogate converged to a solution that closely matches the results obtained from direct optimization of the analytical function. Figure~\ref{fig:nn_opt_conv} shows the convergence of the objective function value during neural network optimization, demonstrating how the algorithm improves the range estimate over training epochs. The neural network approach provides several advantages including fast function evaluation without the need to compute complex aerodynamic equations at each iteration, smooth gradients that facilitate optimization convergence, and the ability to handle noisy or expensive-to-evaluate functions. The Neural Network method converged to an unconstrained optimum of 190m/s and 14,800m which is within a reasonable margin of error with the Scipy solution.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/nn_optimization_convergence.png}
+\caption{Neural network optimization convergence showing objective function value as a function of epochs}
+\label{fig:nn_opt_conv}
+\end{figure}
+
+\subsection{Optimization Method Comparison}
+
+A direct comparison between the unconstrained SQP gradient-based optimization and the neural network surrogate optimization provides insight into the relative performance of these approaches. Figure~\ref{fig:convergence_comparison} compares the objective function convergence for both methods under unconstrained conditions, showing how each approach progresses toward the optimal solution. The SQP method takes much fewer total iterations to converge, however each iteration takes longer due to the increased computational requirement. Each iteration takes roughly 0.2 seconds and 23 total iterations. The Neural Network only takes 1.07 milliseconds per iteration, as the surrogate model evaluation is computationally inexpensive compared to the full model computation. It takes roughly 3000 epochs to converge leading to 3.21 second total algorithm time. Compared to the 4.3 second convergence time for the full model. This is the expected behavior for a surrogate model. The drawback is the training phase which is very long.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{plots/optimization_convergence_comparison.png}
+\caption{Comparison of objective function convergence between unconstrained SQP and neural network optimization methods. NOTE: NN method epochs shown in 1000 iteration intervals}
+\label{fig:convergence_comparison}
+\end{figure}
+
+
+
+\section{Conclusion}
+
+This assignment successfully demonstrated that gradient-based optimization with automatic differentiation provides accurate and efficient solutions for well-behaved functions where gradients can be computed. Constrained optimization effectively handles physical limitations in engineering problems, ensuring solutions are both optimal and feasible. Neural network surrogates offer a powerful approach for complex or expensive-to-evaluate objective functions, enabling optimization in cases where analytical gradients may be difficult to obtain.
+
+The combination of these methods addresses different challenges in optimization. Automatic differentiation eliminates the need for manual gradient calculations while maintaining accuracy. Neural network surrogates enable optimization of complex systems where direct evaluation may be computationally expensive or where analytical gradients are unavailable. The constrained optimization framework ensures that solutions respect physical and operational limitations.
+
+For this application, the Neural Network was not the correct tool as the original function could be evaluated easily but it showed promise that for extremely nonlinear hard to evaluate functions, it could be a good alternative to gradient based approaches.
+
+\section{Code Listings}
+
+The following sections contain the complete code listings for the main scripts used in this project.
+
+\subsection{min\_rosenbrock.py}
+
+\begin{lstlisting}[language=Python, basicstyle=\tiny\ttfamily, breaklines=true]
+import numpy as np
+import scipy
+import jax.numpy as jnp
+import jax
+import matplotlib.pyplot as plt
+
+def rosenbrock(x):
+    return (1 - x[0])**2 + 100 * (x[1] - x[0]**2)**2
+
+jnp_grad = jax.grad(rosenbrock)
+
+iterates = []
+
+def callback(xk):
+    iterates.append(xk)
+
+def jac(x):
+    return np.array(jnp_grad(jnp.array(x)), dtype=np.float64)
+
+x0 = np.array([0.1,0.1])
+constraint_1 = {
+    'type': 'ineq',
+    'fun': lambda x: 1-x[0]**2-x[1]**2
+}
+
+# Add initial condition to iterates before optimization starts
+iterates.append(x0.copy())
+
+opt_result = scipy.optimize.minimize(rosenbrock,x0=x0, jac = jac,method='SLSQP', callback=callback,constraints=constraint_1)
+n_iterations = opt_result.nit
+
+grad_list =[]
+for i in iterates:
+    grad_list.append(np.linalg.norm(jac(i)))
+print(grad_list)
+print("ITerates\n\n",iterates)
+#plot grad vs iteration
+plt.semilogy(grad_list)
+plt.ylabel("Magnitue of Gradient of Rosenbrock")
+plt.xlabel("Iteration")
+plt.title("Gradient Convergence of Rosenbrock Optimization")
+plt.show()
+
+
+
+def plot_contour_with_path(func, path_history, title, x_range=None, y_range=None):
+    """Plot contour of function with optimization path overlaid"""
+    # Create grid
+    if x_range is None:
+        x_range = [np.min([pt[0] for pt in path_history]), np.max([pt[0] for pt in path_history])]
+    if y_range is None:
+        y_range = [np.min([pt[1] for pt in path_history]), np.max([pt[1] for pt in path_history])]
+    x = np.linspace(x_range[0], x_range[1], 400)
+    y = np.linspace(y_range[0], y_range[1], 400)
+    X, Y = np.meshgrid(x, y)
+    Z = np.zeros_like(X)
+    
+    # Evaluate function on grid
+    for i in range(X.shape[0]):
+        for j in range(X.shape[1]):
+            Z[i, j] = func(np.array([X[i, j], Y[i, j]]))
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Plot contours (log scale for Rosenbrock function)
+    levels = np.logspace(-1, 5, 35)
+    contour = ax.contour(X, Y, Z, levels=levels, cmap='viridis', alpha=0.6)
+    ax.clabel(contour, inline=True, fontsize=8)
+    
+    # Plot optimization path
+    path_array = np.array(path_history)
+    ax.plot(path_array[:, 0], path_array[:, 1], 'ro-', linewidth=2, 
+            markersize=4, label='Optimization Path', alpha=0.8)
+    ax.plot(path_array[0, 0], path_array[0, 1], 'go', markersize=10, 
+            label=f'Start: ({path_array[0, 0]:.2f}, {path_array[0, 1]:.2f})')
+    ax.plot(path_array[-1, 0], path_array[-1, 1], 'r*', markersize=15, 
+            label=f'End: ({path_array[-1, 0]:.3f}, {path_array[-1, 1]:.3f})')
+    
+    
+    ax.set_xlabel('x1')
+    ax.set_ylabel('x2')
+    ax.set_title(f'{title}\nIterations: {len(path_history)-1}')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+plot_contour_with_path(rosenbrock,iterates,"Rosenbrock Optimization Path",x_range=(-10,10),y_range=(-15,10))
+\end{lstlisting}
+
+\subsection{scipy\_range\_opt.py}
+
+\begin{lstlisting}[language=Python, basicstyle=\tiny\ttfamily, breaklines=true]
+import scipy
+import numpy as np
+import jax.numpy as jnp
+import jax
+import matplotlib.pyplot as plt
+import time
+import brequet_range_equation_jax as brequet_range_equation
+
+#X = [V, h]
+
+constraint1 = {
+    'type' : 'ineq', 
+    'fun' : lambda x: -x[1]+2e4
+    }
+
+constraint2 = {
+    'type' : 'ineq',
+    'fun' : lambda x: -x[0]+540/3.6 #m/s
+    }
+constraint3 = {
+    'type' : 'ineq',
+    'fun' : lambda x: x[0] 
+}
+constraint4 = {
+    'type' : 'ineq',
+    'fun' : lambda x: x[1]
+}
+
+
+constraints=[constraint1, constraint2, constraint3, constraint4]
+x0 = np.array([200.0, 1500.0], dtype=np.float64)
+
+#grad range
+def range_wrapper(x,fuel_percentage=0.75):
+    S=100#m^2
+    fuel_percentage = fuel_percentage
+    return -brequet_range_equation.range(x[0],x[1],fuel_percentage,S)
+
+jax_grad = jax.grad(range_wrapper)
+def jac(x):
+    # Ensure input is float64 before passing to JAX
+    x_float = np.array(x, dtype=np.float64)
+    return np.array(jax_grad(jnp.array(x_float, dtype=jnp.float64)), dtype=np.float64)
+
+iterates = []
+range_values = []
+constraint_values = []
+sqp_iteration_times = []
+
+def callback(xk):
+    # Track time when callback is called (this marks the end of an iteration)
+    sqp_iteration_times.append(time.time())
+    # Ensure we store as float64 array
+    iterates.append(np.array(xk, dtype=np.float64))
+    # Track range value (negative because we're minimizing -range)
+    range_val = -range_wrapper(xk)
+    range_values.append(range_val)
+    # Track constraint values
+    constraint_vals = []
+    for constraint in constraints:
+        constraint_vals.append(constraint['fun'](xk))
+    constraint_values.append(constraint_vals)
+
+# Add initial condition to iterates before optimization starts
+iterates.append(np.array(x0))
+range_values.append(-range_wrapper(x0))
+initial_constraints = []
+for constraint in constraints:
+    initial_constraints.append(constraint['fun'](x0))
+constraint_values.append(initial_constraints)
+
+# Start timing before optimization
+sqp_start_time = time.time()
+sqp_iteration_times.append(sqp_start_time)  # Mark start time
+
+result = scipy.optimize.minimize(range_wrapper, x0=x0, jac=jac, method = 'SLSQP', callback=callback, constraints = constraints)
+sqp_total_time = time.time() - sqp_start_time
+
+# Calculate time per iteration from the times between consecutive callbacks
+sqp_time_per_iteration = []
+for i in range(1, len(sqp_iteration_times)):
+    iter_time = sqp_iteration_times[i] - sqp_iteration_times[i-1]
+    sqp_time_per_iteration.append(iter_time)
+
+print(result)
+print("SQP Total optimization time: {:.4f} s".format(sqp_total_time))
+print("SQP Number of iterations: {}".format(len(sqp_time_per_iteration)))
+print("SQP Average time per iteration: {:.4f} s ({:.2f} ms)".format(
+    np.mean(sqp_time_per_iteration) if len(sqp_time_per_iteration) > 0 else 0,
+    np.mean(sqp_time_per_iteration)*1000 if len(sqp_time_per_iteration) > 0 else 0))
+
+# Save SQP timing data
+sqp_iterations = np.arange(len(range_values))
+np.savez('plots/sqp_timing_data.npz', 
+         iterations=sqp_iterations, 
+         objective=range_values, 
+         time_per_iter=sqp_time_per_iteration,
+         total_time=sqp_total_time)
+grad=[]
+for x in iterates:
+    grad.append(np.linalg.norm(jac(x)))
+
+plt.figure()
+plt.semilogy(grad)
+plt.xlabel("Iteration")
+plt.ylabel("Magnitude of Gradient")
+plt.title("Range Equation Gradient Convergence")
+plt.savefig("plots/range_equation_optimization.png")
+plt.show()
+
+
+def plot_brequet_contour_with_path(func, path_history, title="Range Optimization Path", x_range=(10, 300), y_range=(0, 25000), show_plot=False):
+    """Plot contour of Brequet range with optimization path overlaid"""
+    print("Generating contour plot (this may take a moment)...")
+    
+    # Create grid (using fewer points for speed)
+    x = np.linspace(float(x_range[0]), float(x_range[1]), 100)
+    y = np.linspace(float(y_range[0]), float(y_range[1]), 100)
+    X, Y = np.meshgrid(x, y)
+    Z = np.zeros_like(X)
+    
+    # Evaluate function on grid
+    for i in range(X.shape[0]):
+        for j in range(X.shape[1]):
+            Z[i, j] = func(np.array([X[i, j], Y[i, j]]))
+    
+    # Convert to actual range (remove negative sign)
+    Z_range = -Z
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    # Plot filled contours
+    contourf = ax.contourf(X, Y, Z_range, levels=30, cmap='viridis', alpha=0.8)
+    cbar = plt.colorbar(contourf, ax=ax, label='Range (m)')
+    
+    # Plot contour lines
+    contour = ax.contour(X, Y, Z_range, levels=15, colors='white', alpha=0.3, linewidths=0.5)
+    ax.clabel(contour, inline=True, fontsize=8, fmt='%.0f')
+    
+    # Plot optimization path
+    path_array = np.array(path_history)
+    ax.plot(path_array[:, 0], path_array[:, 1], 'r-', linewidth=2.5, 
+            label='Optimization Path', alpha=0.9, zorder=5)
+    ax.plot(path_array[:, 0], path_array[:, 1], 'wo', markersize=3, 
+            alpha=0.6, zorder=6)
+    
+    # Mark start and end points
+    ax.plot(path_array[0, 0], path_array[0, 1], 'go', markersize=12, 
+            label=f'Start: V={path_array[0, 0]:.1f} m/s, h={path_array[0, 1]:.0f} m',
+            markeredgecolor='white', markeredgewidth=2, zorder=7)
+    ax.plot(path_array[-1, 0], path_array[-1, 1], 'r*', markersize=18, 
+            label=f'End: V={path_array[-1, 0]:.1f} m/s, h={path_array[-1, 1]:.0f} m',
+            markeredgecolor='white', markeredgewidth=1.5, zorder=7)
+    
+    # Labels and formatting
+    ax.set_xlabel('Velocity (m/s)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Altitude (m)', fontsize=12, fontweight='bold')
+    ax.set_title(f'{title}\n({len(path_history)-1} iterations)', 
+                  fontsize=14, fontweight='bold')
+    ax.legend(loc='best', fontsize=10, framealpha=0.9)
+    ax.grid(True, alpha=0.2, linestyle='--')
+    
+    plt.tight_layout()
+    plt.savefig(f'plots/{title}.png')
+    if show_plot == True:
+        plt.show()
+
+# Plot range and constraint convergence
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+
+# Plot range convergence
+iterations = np.arange(len(range_values))
+ax1.plot(iterations, range_values, 'b-o', linewidth=2, markersize=6, label='Range')
+ax1.set_xlabel('Design Iteration', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Range (km)', fontsize=12, fontweight='bold')
+ax1.set_title('Range Convergence', fontsize=14, fontweight='bold')
+ax1.grid(True, alpha=0.3)
+ax1.legend(fontsize=10)
+
+# Plot constraint convergence (only constraints 1 and 2)
+constraint_array = np.array(constraint_values)
+ax2.plot(iterations, constraint_array[:, 0], 'r-', linewidth=2, label='Constraint 1: h ≤ 20000 m', marker='o', markersize=6)
+ax2.plot(iterations, constraint_array[:, 1], 'g-', linewidth=2, label='Constraint 2: v ≤ 150 m/s', marker='s', markersize=6)
+ax2.axhline(y=0, color='k', linestyle='--', linewidth=1, alpha=0.5, label='Constraint Boundary')
+ax2.set_xlabel('Design Iteration', fontsize=12, fontweight='bold')
+ax2.set_ylabel('Constraint Value', fontsize=12, fontweight='bold')
+ax2.set_title('Constraint Convergence (Inequality: g(x) ≥ 0)', fontsize=14, fontweight='bold')
+ax2.grid(True, alpha=0.3)
+ax2.legend(fontsize=10, loc='best')
+
+plt.tight_layout()
+plt.savefig('plots/range_constraint_convergence.png', dpi=300, bbox_inches='tight')
+print("Saved convergence plot to plots/range_constraint_convergence.png")
+plt.close()
+
+#plot_contour_with_path(range_wrapper,iterates,"Range Optimization Path", x_range=(0,300),y_range=(0,25000))
+plot_brequet_contour_with_path(range_wrapper, iterates, title="Range Optimization Path", show_plot=True)
+\end{lstlisting}
+
+\subsection{train\_objfunc.py}
+
+\begin{lstlisting}[language=Python, basicstyle=\tiny\ttfamily, breaklines=true]
+import numpy as np
+import torch
+from objective_function import obj_func
+
+# Neural network (NN) for objective function. 
+# The NN has two inputs, three hidden layers and one output.
+# torch.nn.Linear stores weights and biases, which are trained to minimize error with respect to the objective function.
+
+class Net(torch.nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        n_inputs = 2;
+        n_layer1 = 50;
+        n_layer2 = 100;
+        n_layer3 = 100;
+        n_layer4 = 100;
+        n_layer5 = 100;
+        n_layer6 = 50;
+        n_outputs = 1;
+        # Specify layers of the neural network.
+        self.hidden1 = torch.nn.Linear(n_inputs, n_layer1) # 2 inputs, n_layer1 neurons
+        self.hidden2 = torch.nn.Linear(n_layer1, n_layer2) # n_layer1 inputs, n_layer2 neurons
+        self.hidden3 = torch.nn.Linear(n_layer2, n_layer3) # n_layer2 inputs, n_layer3 neurons
+        self.hidden4 = torch.nn.Linear(n_layer3, n_layer4) # n_layer3 inputs, n_layer4 neurons
+        self.hidden5 = torch.nn.Linear(n_layer4, n_layer5) # n_layer4 inputs, n_layer5 neurons
+        self.hidden6 = torch.nn.Linear(n_layer5, n_layer6) # n_layer5 inputs, n_layer6 neurons
+        self.output_layer = torch.nn.Linear(n_layer6, n_outputs) # n_layer3 inputs, 1 output
+        
+        # Initialize weights and biases.
+        # torch.nn.init.eye_(self.hidden1.weight);
+        # torch.nn.init.ones_(self.hidden1.bias);
+        # torch.nn.init.eye_(self.hidden2.weight);
+        # torch.nn.init.ones_(self.hidden2.bias);
+        # torch.nn.init.eye_(self.hidden3.weight);
+        # torch.nn.init.ones_(self.hidden3.bias);
+        # torch.nn.init.eye_(self.output_layer.weight);
+        # torch.nn.init.ones_(self.output_layer.bias);
+
+
+    def forward(self, x): # this is called implicitly when you call the object
+        x = torch.relu(self.hidden1(x))
+        x = torch.relu(self.hidden2(x))
+        x = torch.relu(self.hidden3(x))
+        x = torch.relu(self.hidden4(x))
+        x = torch.relu(self.hidden5(x))
+        x = torch.relu(self.hidden6(x))
+        x = self.output_layer(x) #keep inputting x through the network, keep updating until at output layer
+        return x
+
+def get_trained_objfunc(epochs=20000, n_vel_samples_1d=75, n_altitude_samples_1d=75): 
+    loss_history = []
+    epoch_history = []
+    # Data to train the neural network.
+    velocity_1d =  torch.linspace(50,300, n_vel_samples_1d); #x
+    altitude_1d =  torch.linspace(1000,20000, n_altitude_samples_1d); #y
+    x_samples,y_samples = np.meshgrid(velocity_1d.detach().numpy(), altitude_1d.detach().numpy());
+    xy_tensor = torch.from_numpy(np.concatenate((x_samples.reshape(n_vel_samples_1d*n_altitude_samples_1d,1), y_samples.reshape(n_vel_samples_1d*n_altitude_samples_1d,1)),axis=1));
+    print("Size of training data: ", xy_tensor.shape)
+    f_exact = obj_func(xy_tensor).unsqueeze(1);
+
+    f_neural_net = Net()
+    loss_function = torch.nn.MSELoss() # Using squared L2 norm of the error.
+    optimizer = torch.optim.Adam(f_neural_net.parameters(), lr=0.005)  # Using Adam optimizer.
+
+    print("Training neural network of objective function");
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        outputs = f_neural_net(xy_tensor)
+        loss = loss_function(outputs, f_exact)
+        loss.backward() # Backpropagation and computing gradients w.r.t. weights and biases.
+        optimizer.step() # Update weights and biases.
+        loss_history.append(loss.detach().numpy())
+        epoch_history.append(epoch)
+        if epoch % 500 == 0:
+            print("Epoch {}: Loss = {}".format(epoch, loss.detach().numpy()))
+
+    print("Finished training neural network of objective function");
+
+    return f_neural_net, loss_history, epoch_history;
+\end{lstlisting}
+
+\subsection{optimization\_neural\_network.py}
+
+\begin{lstlisting}[language=Python, basicstyle=\tiny\ttfamily, breaklines=true]
+import matplotlib.pyplot as plt
+import torch
+import numpy as np
+import os
+import time
+from train_objfunc import get_trained_objfunc, Net
+from constraints import constraint_1, constraint_2
+from objective_function import obj_func
+
+train_objfunc = True
+
+# Create directories if they don't exist
+os.makedirs("models", exist_ok=True)
+os.makedirs("plots", exist_ok=True)
+
+
+# Modified implementation of: Chen J, Liu Y. 2023 Neural optimization machine: a neural network approach for optimization and its application in additive manufacturing with physics-guided learning. Phil. Trans. R. Soc. A.
+
+# Define the neural network for optimization problem
+class Net_optimizationproblem(torch.nn.Module):
+    def __init__(self,f_neural_net, constraint):
+        super(Net_optimizationproblem, self).__init__()
+        self.f_neural_net = f_neural_net; # NN of Objective function
+        for param in self.f_neural_net.parameters(): # Keep the NN objective function weights and biases constant
+            param.requires_grad = False; # Does not compute gradients wrt weights and biases of the objective function.
+        self.constraint = constraint; 
+        # x_opt = Wx + b where we are optimizing W and b
+        self.linear = torch.nn.Linear(2,2); # Define NN of the Optimization Problem
+        torch.nn.init.eye_(self.linear.weight);
+        torch.nn.init.zeros_(self.linear.bias);
+
+
+    def forward(self, x):
+        x = self.linear(x);
+        f_val = self.f_neural_net(x).squeeze();
+        #f_val = obj_func(x); # Can also use the analytical objective function.
+        constraints_val = self.constraint(x); 
+        #Using a penalty method to enforce constraints (suboptimal algorithm)
+        #TRYING NO CONSTRAINT PENALTY FOR NOW
+        output = f_val #+ 10*(torch.relu(constraints_val) + torch.relu(-constraints_val));
+        return output;
+
+#Custom loss function for optimization.
+class CustomLoss(torch.nn.Module):
+    def __init__(self):
+        super(CustomLoss, self).__init__()
+
+    def forward(self, predictions):
+        return predictions;
+
+
+def run_optimizer(objfunc_neural_net, constraint):
+    optimization_problem = Net_optimizationproblem(objfunc_neural_net, constraint); 
+    loss_function = CustomLoss() 
+    optimizer = torch.optim.NAdam(optimization_problem.parameters(), lr=0.005); #NAdam is a variant of Adam that is designed to handle non-convex objectives.
+
+    x_initial = torch.Tensor(1,2); #just a regular array essentially -> intialize size -> [x1, x2]
+    x_initial[:,0] = 150; #velocity
+    x_initial[:,1] = 14000; #altitude
+    
+    # Track objective function values and timing
+    objective_history = []
+    epoch_history = []
+    time_per_iteration = []
+    total_start_time = time.time()
+    
+    # Use fewer epochs for faster testing - can be increased for better convergence
+    n_epochs = 10000  # Reduced from 40000 for faster execution
+    for epoch in range(n_epochs):
+        iter_start_time = time.time()
+        optimizer.zero_grad() # Gradient of wrt weights and biases are set to zero.
+        outputs = optimization_problem(x_initial)
+        loss = loss_function(outputs)
+        loss.backward() # Backward propagation with automatic differentiation. Compute d (Obj_fun) / d (weights and biases)
+        optimizer.step() # Updates weights and biases with specified learning rate
+        
+        # Get current optimal point and evaluate objective function
+        x_current = optimization_problem.linear(x_initial)
+        # Evaluate objective function (obj_func expects tensor input)
+        obj_result = obj_func(x_current.detach())
+        # Handle both tensor and numpy return values
+        if isinstance(obj_result, torch.Tensor):
+            obj_val = -obj_result.item()  # Negative because we minimize -range
+        else:
+            obj_val = -float(obj_result)  # Negative because we minimize -range
+        objective_history.append(obj_val)
+        epoch_history.append(epoch)
+        
+        iter_time = time.time() - iter_start_time
+        time_per_iteration.append(iter_time)
+        
+        if epoch % 1000 == 0:
+            print("Epoch {}: Loss = {}, Objective = {:.2f} km, Time = {:.4f} s".format(
+                epoch, loss.detach().numpy(), obj_val, iter_time))
+
+    total_time = time.time() - total_start_time
+    x_optimal = optimization_problem.linear(x_initial);
+    print("Optimal point = ", x_optimal);
+    print("Total optimization time: {:.2f} s".format(total_time))
+    print("Average time per iteration: {:.4f} s".format(np.mean(time_per_iteration)))
+    
+    return x_optimal, objective_history, epoch_history, time_per_iteration;
+
+
+
+print("===================================================================");
+print("                 Training NN objective function                       ");
+print("===================================================================");
+
+if train_objfunc:
+    objfunc_neuralnet, loss_history, epoch_history = get_trained_objfunc(epochs=25000, n_vel_samples_1d=70, n_altitude_samples_1d=70);
+    #save objfunc neural network
+    torch.save(objfunc_neuralnet.state_dict(), "models/objfunc_neuralnet.pth");
+    plt.plot(epoch_history, loss_history)
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss History")
+    plt.savefig("plots/loss_history_objfunc.png")
+else:
+    objfunc_neuralnet = Net()
+    objfunc_neuralnet.load_state_dict(torch.load("models/objfunc_neuralnet_1.pth"));
+    objfunc_neuralnet.eval();
+
+# #test values going through the NN and compare to analytical objective function
+print("Testing values going through the NN and comparing to analytical objective function")
+print(objfunc_neuralnet(torch.Tensor([[100, 14000]])))
+print(obj_func(torch.Tensor([[100, 14000]])),"\n")
+print("Difference: ", abs(objfunc_neuralnet(torch.Tensor([[150, 14000]])) - obj_func(torch.Tensor([[150, 14000]]))))
+print(objfunc_neuralnet(torch.Tensor([[160, 14500]])))
+print(obj_func(torch.Tensor([[160, 14500]])),"\n")
+print("Difference: ", abs(objfunc_neuralnet(torch.Tensor([[160, 14500]])) - obj_func(torch.Tensor([[160, 14500]]))))
+print(objfunc_neuralnet(torch.Tensor([[170, 15000]])))
+print(obj_func(torch.Tensor([[170, 15000]])),"\n")
+print("Difference: ", abs(objfunc_neuralnet(torch.Tensor([[170, 15000]])) - obj_func(torch.Tensor([[170, 15000]]))))
+print(objfunc_neuralnet(torch.Tensor([[180, 15500]])))
+print(obj_func(torch.Tensor([[180, 15500]])),"\n")
+print("Difference: ", abs(objfunc_neuralnet(torch.Tensor([[180, 15500]])) - obj_func(torch.Tensor([[180, 15500]]))))
+print(objfunc_neuralnet(torch.Tensor([[190, 16000]])))
+print(obj_func(torch.Tensor([[190, 16000]])),"\n")
+print(objfunc_neuralnet(torch.Tensor([[200, 16500]])))
+print(obj_func(torch.Tensor([[200, 16500]])),"\n")
+print(objfunc_neuralnet(torch.Tensor([[210, 17000]])))
+print(obj_func(torch.Tensor([[210, 17000]])),"\n")
+print(objfunc_neuralnet(torch.Tensor([[220, 17500]])))
+print(obj_func(torch.Tensor([[220, 17500]])),"\n")
+print("===================================================================");
+print('\n\n');
+print("===================================================================");
+print("                 Optimization using Neural Network                 ");
+print("===================================================================");
+print('\n');
+print("===================================================================");
+print("Running optimization for brequet range equation, altitude constraint");
+print("===================================================================");
+nn_optimal, nn_objective_history, nn_epoch_history, nn_time_per_iter = run_optimizer(objfunc_neuralnet, constraint_1);
+
+# Plot neural network optimization convergence
+plt.figure(figsize=(10, 6))
+plt.plot(nn_epoch_history, nn_objective_history, 'b-', linewidth=2, label='Neural Network Optimization')
+plt.xlabel('Epoch', fontsize=12, fontweight='bold')
+plt.ylabel('Objective Function (Range in km)', fontsize=12, fontweight='bold')
+plt.title('Neural Network Optimization Convergence', fontsize=14, fontweight='bold')
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=10)
+plt.tight_layout()
+plt.savefig('../plots/nn_optimization_convergence.png', dpi=300, bbox_inches='tight')
+print("Saved neural network convergence plot to plots/nn_optimization_convergence.png")
+plt.close()
+
+# Save timing data for comparison
+np.savez('../plots/nn_timing_data.npz', 
+         epochs=nn_epoch_history, 
+         objective=nn_objective_history, 
+         time_per_iter=nn_time_per_iter)
+print("===================================================================");
+print('\n\n');
+print("===================================================================");
+print("Running optimization for brequet range equation, velocity constraint");
+print("===================================================================");
+#run_optimizer(objfunc_neuralnet, constraint_2);
+print("===================================================================");
+\end{lstlisting}
+
+\end{document}

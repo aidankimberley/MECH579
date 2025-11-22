@@ -3,12 +3,13 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 import matplotlib.pyplot as plt
-import brequet_range_equation
+import time
+import brequet_range_equation_jax as brequet_range_equation
 
 #X = [V, h]
 
 constraint1 = {
-    'type' : 'ineq',
+    'type' : 'ineq', 
     'fun' : lambda x: -x[1]+2e4
     }
 
@@ -42,16 +43,59 @@ def jac(x):
     return np.array(jax_grad(jnp.array(x_float, dtype=jnp.float64)), dtype=np.float64)
 
 iterates = []
+range_values = []
+constraint_values = []
+sqp_iteration_times = []
 
 def callback(xk):
+    # Track time when callback is called (this marks the end of an iteration)
+    sqp_iteration_times.append(time.time())
     # Ensure we store as float64 array
     iterates.append(np.array(xk, dtype=np.float64))
+    # Track range value (negative because we're minimizing -range)
+    range_val = -range_wrapper(xk)
+    range_values.append(range_val)
+    # Track constraint values
+    constraint_vals = []
+    for constraint in constraints:
+        constraint_vals.append(constraint['fun'](xk))
+    constraint_values.append(constraint_vals)
 
 # Add initial condition to iterates before optimization starts
 iterates.append(np.array(x0))
+range_values.append(-range_wrapper(x0))
+initial_constraints = []
+for constraint in constraints:
+    initial_constraints.append(constraint['fun'](x0))
+constraint_values.append(initial_constraints)
+
+# Start timing before optimization
+sqp_start_time = time.time()
+sqp_iteration_times.append(sqp_start_time)  # Mark start time
 
 result = scipy.optimize.minimize(range_wrapper, x0=x0, jac=jac, method = 'SLSQP', callback=callback, constraints = constraints)
+sqp_total_time = time.time() - sqp_start_time
+
+# Calculate time per iteration from the times between consecutive callbacks
+sqp_time_per_iteration = []
+for i in range(1, len(sqp_iteration_times)):
+    iter_time = sqp_iteration_times[i] - sqp_iteration_times[i-1]
+    sqp_time_per_iteration.append(iter_time)
+
 print(result)
+print("SQP Total optimization time: {:.4f} s".format(sqp_total_time))
+print("SQP Number of iterations: {}".format(len(sqp_time_per_iteration)))
+print("SQP Average time per iteration: {:.4f} s ({:.2f} ms)".format(
+    np.mean(sqp_time_per_iteration) if len(sqp_time_per_iteration) > 0 else 0,
+    np.mean(sqp_time_per_iteration)*1000 if len(sqp_time_per_iteration) > 0 else 0))
+
+# Save SQP timing data
+sqp_iterations = np.arange(len(range_values))
+np.savez('plots/sqp_timing_data.npz', 
+         iterations=sqp_iterations, 
+         objective=range_values, 
+         time_per_iter=sqp_time_per_iteration,
+         total_time=sqp_total_time)
 grad=[]
 for x in iterates:
     grad.append(np.linalg.norm(jac(x)))
@@ -61,7 +105,7 @@ plt.semilogy(grad)
 plt.xlabel("Iteration")
 plt.ylabel("Magnitude of Gradient")
 plt.title("Range Equation Gradient Convergence")
-plt.savefig("range_equation_optimization.png")
+plt.savefig("plots/range_equation_optimization.png")
 plt.show()
 
 
@@ -118,9 +162,37 @@ def plot_brequet_contour_with_path(func, path_history, title="Range Optimization
     ax.grid(True, alpha=0.2, linestyle='--')
     
     plt.tight_layout()
-    plt.savefig(f'{title}.png')
+    plt.savefig(f'plots/{title}.png')
     if show_plot == True:
         plt.show()
+
+# Plot range and constraint convergence
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+
+# Plot range convergence
+iterations = np.arange(len(range_values))
+ax1.plot(iterations, range_values, 'b-o', linewidth=2, markersize=6, label='Range')
+ax1.set_xlabel('Design Iteration', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Range (km)', fontsize=12, fontweight='bold')
+ax1.set_title('Range Convergence', fontsize=14, fontweight='bold')
+ax1.grid(True, alpha=0.3)
+ax1.legend(fontsize=10)
+
+# Plot constraint convergence (only constraints 1 and 2)
+constraint_array = np.array(constraint_values)
+ax2.plot(iterations, constraint_array[:, 0], 'r-', linewidth=2, label='Constraint 1: h ≤ 20000 m', marker='o', markersize=6)
+ax2.plot(iterations, constraint_array[:, 1], 'g-', linewidth=2, label='Constraint 2: v ≤ 150 m/s', marker='s', markersize=6)
+ax2.axhline(y=0, color='k', linestyle='--', linewidth=1, alpha=0.5, label='Constraint Boundary')
+ax2.set_xlabel('Design Iteration', fontsize=12, fontweight='bold')
+ax2.set_ylabel('Constraint Value', fontsize=12, fontweight='bold')
+ax2.set_title('Constraint Convergence (Inequality: g(x) ≥ 0)', fontsize=14, fontweight='bold')
+ax2.grid(True, alpha=0.3)
+ax2.legend(fontsize=10, loc='best')
+
+plt.tight_layout()
+plt.savefig('plots/range_constraint_convergence.png', dpi=300, bbox_inches='tight')
+print("Saved convergence plot to plots/range_constraint_convergence.png")
+plt.close()
 
 #plot_contour_with_path(range_wrapper,iterates,"Range Optimization Path", x_range=(0,300),y_range=(0,25000))
 plot_brequet_contour_with_path(range_wrapper, iterates, title="Range Optimization Path", show_plot=True)
