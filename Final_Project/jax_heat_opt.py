@@ -3,6 +3,15 @@ import numpy as np # numpy for vectorization
 from collections.abc import Callable # For type hints
 import matplotlib.pyplot as plt
 from scipy import optimize
+import jax
+import jax.numpy as jnp
+import os
+
+# Enable float64 for better numerical precision
+jax.config.update("jax_enable_x64", True)
+
+# Create plots directory if it doesn't exist
+os.makedirs('plots', exist_ok=True)
 
 
 OPTIMIZATION_METHOD = 'trust-constr'
@@ -452,6 +461,517 @@ if __name__ == "__main__":
         
         return w1 * max_T/273 - w2 * eta
 
+
+
+    # ==================== JAX-based Objective Function ====================
+    # For automatic differentiation, we need pure functions using jax.numpy
+    
+    # Constants for JAX functions (avoid closure over mutable objects)
+    JAX_PARAMS = {
+        'n_x': N,
+        'n_y': N,
+        'dx': cpu_x / (N - 1),
+        'dy': cpu_y / (N - 1),
+        'height': cpu_z,
+        'k': k_si,
+        'rho': rho_si,
+        'cp': c_si,
+        'ext_k': 0.02772,
+        'ext_Pr': 0.7215,
+        'ext_nu': 1.506e-5,
+        'ext_T': 293.0,
+        'CFL': 0.5,
+    }
+    JAX_PARAMS['thermal_alpha'] = JAX_PARAMS['k'] / (JAX_PARAMS['rho'] * JAX_PARAMS['cp'])
+    JAX_PARAMS['dt'] = JAX_PARAMS['CFL'] * JAX_PARAMS['dx'] * JAX_PARAMS['dy'] / JAX_PARAMS['thermal_alpha']
+    
+    # Create mesh grids as JAX arrays
+    x_axis_jax = jnp.linspace(0, cpu_x, N)
+    y_axis_jax = jnp.linspace(0, cpu_y, N)
+    X_jax, Y_jax = jnp.meshgrid(x_axis_jax, y_axis_jax, indexing='ij')
+    
+    def jax_initial_condition(X, Y):
+        """Initial condition using JAX arrays"""
+        return 70 * jnp.sin(X * jnp.pi / cpu_x) * jnp.sin(Y * jnp.pi / cpu_y) + 293
+    
+    def jax_heat_generation(X, Y, a, b, c):
+        """Heat generation function f(x,y) = ax + by + c"""
+        return a * X + b * Y + c
+    
+    def jax_fan_efficiency(v):
+        """Fan efficiency: η(v) = -0.002v² + 0.08v"""
+        return -0.002 * v**2 + 0.08 * v
+    
+    def jax_h_boundary(u, params):
+        """Convective heat transfer coefficient at boundaries (natural convection)"""
+        ext_T = params['ext_T']
+        ext_nu = params['ext_nu']
+        ext_Pr = params['ext_Pr']
+        ext_k = params['ext_k']
+        dx = params['dx']
+        
+        # Ensure temperature average is positive and reasonable
+        T_avg = jnp.maximum((u + ext_T) / 2, 200.0)  # Min 200K
+        beta = 1.0 / T_avg
+        
+        # Temperature difference - use absolute value for Rayleigh calculation
+        dT = u - ext_T
+        dT_abs = jnp.maximum(jnp.abs(dT), 1e-6)  # Avoid zero
+        
+        rayleigh = 9.81 * beta * dT_abs * dx**3 / (ext_nu**2) * ext_Pr
+        # Clip Rayleigh to reasonable range to avoid numerical issues
+        rayleigh = jnp.clip(rayleigh, 1e-10, 1e12)
+        
+        nusselt = (0.825 + (0.387 * rayleigh**(1.0/6.0)) / 
+                   (1.0 + (0.492/ext_Pr)**(9.0/16.0))**(8.0/27.0))**2
+        
+        h = nusselt * ext_k / dx
+        # Clip to reasonable h values
+        return jnp.clip(h, 0.1, 1000.0)
+    
+    def jax_h_top(X, v, params):
+        """Convective heat transfer coefficient from fan (forced convection)"""
+        ext_nu = params['ext_nu']
+        ext_Pr = params['ext_Pr']
+        ext_k = params['ext_k']
+        
+        # Ensure v is positive
+        v_safe = jnp.maximum(v, 0.1)
+        
+        # Add small offset to X to avoid division by zero
+        X_safe = jnp.maximum(X, 1e-6)
+        
+        Rex = v_safe * X_safe / ext_nu
+        Rex = jnp.maximum(Rex, 1.0)  # Minimum Reynolds number
+        
+        # Use jnp.where for conditional (laminar vs turbulent)
+        # Both branches must be valid numerically
+        Nux_laminar = 0.332 * jnp.sqrt(Rex) * ext_Pr**(1.0/3.0)
+        Nux_turbulent = 0.0296 * Rex**0.8 * ext_Pr**(1.0/3.0)
+        Nux = jnp.where(Rex < 5e5, Nux_laminar, Nux_turbulent)
+        
+        h = Nux * ext_k / X_safe
+        # Clip to reasonable h values
+        return jnp.clip(h, 0.1, 10000.0)
+    
+    def jax_step_forward(u, v, a, b, c, X, Y, params):
+        """Single time step of the heat equation solver"""
+        dx = params['dx']
+        dy = params['dy']
+        dt = params['dt']
+        k = params['k']
+        height = params['height']
+        ext_T = params['ext_T']
+        thermal_alpha = params['thermal_alpha']
+        n_x = params['n_x']
+        n_y = params['n_y']
+        
+        tau = thermal_alpha * dt / (dx * dy)
+        
+        # Compute heat transfer coefficients
+        h_top_vals = jax_h_top(X, v, params)
+        h_boundary_vals = jax_h_boundary(u, params)
+        
+        # Heat generation
+        e_dot = jax_heat_generation(X, Y, a, b, c)
+        
+        # Initialize new temperature field
+        u_new = u.copy()
+        
+        # Interior points (vectorized)
+        u_new = u_new.at[1:-1, 1:-1].set(
+            u[1:-1, 1:-1] +
+            tau * (
+                dy * (u[2:, 1:-1] - 2*u[1:-1, 1:-1] + u[:-2, 1:-1]) / dx +
+                dx * (u[1:-1, 2:] - 2*u[1:-1, 1:-1] + u[1:-1, :-2]) / dy
+            ) +
+            tau * h_top_vals[1:-1, 1:-1] / k * dx * dy / height * (ext_T - u[1:-1, 1:-1]) +
+            tau * dx * dy / k * e_dot[1:-1, 1:-1]
+        )
+        
+        # Left boundary (i=0)
+        u_new = u_new.at[0, 1:-1].set(
+            u[0, 1:-1] +
+            2 * tau * h_boundary_vals[0, 1:-1] / k * dy * (ext_T - u[0, 1:-1]) +
+            2 * tau * dy * (u[1, 1:-1] - u[0, 1:-1]) / dx +
+            tau * h_top_vals[0, 1:-1] / k * dx * dy / height * (ext_T - u[0, 1:-1]) +
+            tau * e_dot[0, 1:-1] / k * dx * dy
+        )
+        
+        # Right boundary (i=n_x-1)
+        u_new = u_new.at[-1, 1:-1].set(
+            u[-1, 1:-1] +
+            2 * tau * h_boundary_vals[-1, 1:-1] / k * dy * (ext_T - u[-1, 1:-1]) +
+            2 * tau * dy * (u[-2, 1:-1] - u[-1, 1:-1]) / dx +
+            tau * h_top_vals[-1, 1:-1] / k * dx * dy / height * (ext_T - u[-1, 1:-1]) +
+            tau * e_dot[-1, 1:-1] / k * dx * dy
+        )
+        
+        # Bottom boundary (j=0)
+        u_new = u_new.at[1:-1, 0].set(
+            u[1:-1, 0] +
+            2 * tau * h_boundary_vals[1:-1, 0] / k * dx * (ext_T - u[1:-1, 0]) +
+            2 * tau * dx * (u[1:-1, 1] - u[1:-1, 0]) / dy +
+            tau * h_top_vals[1:-1, 0] / k * dx * dy / height * (ext_T - u[1:-1, 0]) +
+            tau * e_dot[1:-1, 0] / k * dx * dy
+        )
+        
+        # Top boundary (j=n_y-1)
+        u_new = u_new.at[1:-1, -1].set(
+            u[1:-1, -1] +
+            2 * tau * h_boundary_vals[1:-1, -1] / k * dx * (ext_T - u[1:-1, -1]) +
+            2 * tau * dx * (u[1:-1, -2] - u[1:-1, -1]) / dy +
+            tau * h_top_vals[1:-1, -1] / k * dx * dy / height * (ext_T - u[1:-1, -1]) +
+            tau * e_dot[1:-1, -1] / k * dx * dy
+        )
+        
+        # Corners
+        # Bottom-left (0,0)
+        u_new = u_new.at[0, 0].set(
+            u[0, 0] +
+            2 * tau * h_boundary_vals[0, 0] * dy / k * (ext_T - u[0, 0]) +
+            2 * tau * h_boundary_vals[0, 0] * dx / k * (ext_T - u[0, 0]) +
+            2 * tau * dx * (u[0, 1] - u[0, 0]) / dy +
+            2 * tau * dy * (u[1, 0] - u[0, 0]) / dx +
+            tau * h_top_vals[0, 0] / k * dx * dy / height * (ext_T - u[0, 0]) +
+            tau * e_dot[0, 0] / k * dx * dy
+        )
+        
+        # Bottom-right (-1,0)
+        u_new = u_new.at[-1, 0].set(
+            u[-1, 0] +
+            2 * tau * h_boundary_vals[-1, 0] * dy / k * (ext_T - u[-1, 0]) +
+            2 * tau * h_boundary_vals[-1, 0] * dx / k * (ext_T - u[-1, 0]) +
+            2 * tau * dx * (u[-1, 1] - u[-1, 0]) / dy +
+            2 * tau * dy * (u[-2, 0] - u[-1, 0]) / dx +
+            tau * h_top_vals[-1, 0] / k * dx * dy / height * (ext_T - u[-1, 0]) +
+            tau * e_dot[-1, 0] / k * dx * dy
+        )
+        
+        # Top-left (0,-1)
+        u_new = u_new.at[0, -1].set(
+            u[0, -1] +
+            2 * tau * h_boundary_vals[0, -1] * dy / k * (ext_T - u[0, -1]) +
+            2 * tau * h_boundary_vals[0, -1] * dx / k * (ext_T - u[0, -1]) +
+            2 * tau * dx * (u[0, -2] - u[0, -1]) / dy +
+            2 * tau * dy * (u[1, -1] - u[0, -1]) / dx +
+            tau * h_top_vals[0, -1] / k * dx * dy / height * (ext_T - u[0, -1]) +
+            tau * e_dot[0, -1] / k * dx * dy
+        )
+        
+        # Top-right (-1,-1)
+        u_new = u_new.at[-1, -1].set(
+            u[-1, -1] +
+            2 * tau * h_boundary_vals[-1, -1] * dy / k * (ext_T - u[-1, -1]) +
+            2 * tau * h_boundary_vals[-1, -1] * dx / k * (ext_T - u[-1, -1]) +
+            2 * tau * dx * (u[-1, -2] - u[-1, -1]) / dy +
+            2 * tau * dy * (u[-2, -1] - u[-1, -1]) / dx +
+            tau * h_top_vals[-1, -1] / k * dx * dy / height * (ext_T - u[-1, -1]) +
+            tau * e_dot[-1, -1] / k * dx * dy
+        )
+        
+        # Clamp temperatures to physically reasonable range to ensure numerical stability
+        u_new = jnp.clip(u_new, 200.0, 1000.0)  # 200K to 1000K
+        
+        return u_new
+    
+    def jax_solve_steady_state(v, a, b, c, X, Y, params, num_iters=3000):
+        """Solve heat equation to steady state using JAX lax.scan.
+        
+        Note: Uses fixed iteration count (not convergence-based) because
+        JAX reverse-mode autodiff doesn't support while_loop with 
+        data-dependent stopping conditions.
+        
+        Uses lax.scan which is more memory-efficient for autodiff than fori_loop.
+        """
+        u0 = jax_initial_condition(X, Y)
+        
+        def scan_fn(u, _):
+            u_next = jax_step_forward(u, v, a, b, c, X, Y, params)
+            return u_next, None  # carry, output (we don't need output)
+        
+        # Run fixed number of iterations using scan
+        u_final, _ = jax.lax.scan(scan_fn, u0, None, length=num_iters)
+        
+        return u_final
+
+    def objective_function_jax(x):
+        """JAX-compatible objective function for automatic differentiation.
+        
+        Parameters:
+            x: JAX array [v, a, b, c]
+        Returns:
+            Scalar objective value: w1 * max(T)/273 - w2 * η
+        """
+        v, a, b, c = x[0], x[1], x[2], x[3]
+        
+        # Solve heat equation to steady state (fixed iterations for AD compatibility)
+        u_steady = jax_solve_steady_state(v, a, b, c, X_jax, Y_jax, JAX_PARAMS)
+        
+        # Compute objective
+        max_T = jnp.max(u_steady)
+        eta = jax_fan_efficiency(v)
+        
+        return w1 * max_T / 273 - w2 * eta
+    
+    # Create gradient function using JAX autodiff
+    grad_objective_jax = jax.grad(objective_function_jax)
+    
+    # JIT compile for speed
+    objective_function_jax_jit = jax.jit(objective_function_jax)
+    grad_objective_jax_jit = jax.jit(grad_objective_jax)
+    
+    # ==================== Part (c): Compare AD vs FD gradients ====================
+    print("\n" + "=" * 60)
+    print("PART (C): Comparing AD-based vs FD-based derivatives")
+    print("=" * 60)
+    
+    # Use the OPTIMUM point from the numpy-based optimization (Part b)
+    # These are the optimal values found by trust-constr:
+    x_optimal = jnp.array([19.9984, -58.7540, -59.2387, 153324.3360])
+    
+    print(f"\nEvaluating gradients at the OPTIMAL point:")
+    print(f"  v = {x_optimal[0]:.4f} m/s")
+    print(f"  a = {x_optimal[1]:.4f} W/m⁴") 
+    print(f"  b = {x_optimal[2]:.4f} W/m⁴")
+    print(f"  c = {x_optimal[3]:.4f} W/m³")
+    
+    print("\nComputing AD gradient (this may take a moment for JIT compilation)...")
+    
+    # Compute objective value first
+    f0 = objective_function_jax(x_optimal)
+    print(f"Objective at optimum: {float(f0):.8f}")
+    
+    # Compute AD gradient
+    grad_ad = grad_objective_jax(x_optimal)
+    print(f"AD gradient computed: {grad_ad}")
+    
+    # Compute FD gradient for comparison - testing convergence for parameter v
+    print("\n" + "-" * 70)
+    print("FD Gradient Convergence Study for ∂f/∂v:")
+    print("-" * 70)
+    print(f"{'Step Size h':<15} {'FD ∂f/∂v':<25} {'Relative Error vs AD':<20}")
+    print("-" * 70)
+    
+    step_sizes = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+    fd_grads_v = []
+    
+    for h in step_sizes:
+        x_plus = x_optimal.at[0].set(x_optimal[0] + h)
+        f_plus = objective_function_jax(x_plus)
+        fd_grad_v = (f_plus - f0) / h
+        fd_grads_v.append(float(fd_grad_v))
+        rel_error = abs(fd_grad_v - grad_ad[0]) / (abs(grad_ad[0]) + 1e-12)
+        print(f"{h:<15.0e} {float(fd_grad_v):<25.15f} {float(rel_error):<20.2e}")
+    
+    print("-" * 70)
+    print(f"\nAD-based ∂f/∂v = {float(grad_ad[0]):.15f}")
+    
+    # Find best FD approximation (before numerical errors dominate)
+    # Usually around h=1e-5 or 1e-6 for float64
+    print(f"Best FD ∂f/∂v  = {fd_grads_v[4]:.15f}  (h=1e-5)")
+    
+    # Full gradient comparison table
+    print("\n" + "=" * 70)
+    print("FULL GRADIENT COMPARISON AT OPTIMUM:")
+    print("=" * 70)
+    print(f"{'Parameter':<12} {'AD Gradient':<25} {'FD Gradient (h=1e-5)':<25}")
+    print("-" * 70)
+    
+    param_names = ['v', 'a', 'b', 'c']
+    h_fd = 1e-5
+    fd_grads_all = []
+    for i, name in enumerate(param_names):
+        x_plus = x_optimal.at[i].set(x_optimal[i] + h_fd)
+        f_plus = objective_function_jax(x_plus)
+        fd_grad = (f_plus - f0) / h_fd
+        fd_grads_all.append(float(fd_grad))
+        print(f"{name:<12} {float(grad_ad[i]):<25.15f} {float(fd_grad):<25.15f}")
+    
+    print("=" * 70)
+    
+    # Summary statistics
+    print("\nSUMMARY:")
+    print("-" * 70)
+    for i, name in enumerate(param_names):
+        rel_err = abs(grad_ad[i] - fd_grads_all[i]) / (abs(fd_grads_all[i]) + 1e-12)
+        print(f"  ∂f/∂{name}: AD={float(grad_ad[i]):.6e}, FD={fd_grads_all[i]:.6e}, RelErr={float(rel_err):.2e}")
+    print("-" * 70)
+    
+    # ==================== Part (d): Optimization with AD gradients ====================
+    print("\n" + "=" * 60)
+    print("PART (D): Optimization with AD-based derivatives")
+    print("=" * 60)
+    
+    # JAX-compatible constraint function
+    def constraint_jax(x):
+        """Constraint: total heat generation = 10W"""
+        a, b, c = x[1], x[2], x[3]
+        dx = JAX_PARAMS['dx']
+        dy = JAX_PARAMS['dy']
+        height = JAX_PARAMS['height']
+        
+        heat_gen = jax_heat_generation(X_jax, Y_jax, a, b, c) * dx * dy * height
+        # Apply boundary corrections (half weight at edges, quarter at corners)
+        heat_gen = heat_gen.at[0, :].set(heat_gen[0, :] / 2)
+        heat_gen = heat_gen.at[-1, :].set(heat_gen[-1, :] / 2)
+        heat_gen = heat_gen.at[:, 0].set(heat_gen[:, 0] / 2)
+        heat_gen = heat_gen.at[:, -1].set(heat_gen[:, -1] / 2)
+        total = jnp.sum(heat_gen)
+        return total - 10.0
+    
+    grad_constraint_jax = jax.grad(constraint_jax)
+    
+    # Wrapper functions that convert between numpy and JAX arrays
+    def objective_with_ad_grad(x_np):
+        """Objective function using JAX for both value and gradient"""
+        x_jax = jnp.array(x_np)
+        return float(objective_function_jax(x_jax))
+    
+    def gradient_with_ad(x_np):
+        """Gradient of objective using JAX autodiff"""
+        x_jax = jnp.array(x_np)
+        grad = grad_objective_jax(x_jax)
+        return np.array(grad)
+    
+    def constraint_with_ad(x_np):
+        """Constraint function using JAX"""
+        x_jax = jnp.array(x_np)
+        return float(constraint_jax(x_jax))
+    
+    def constraint_grad_with_ad(x_np):
+        """Gradient of constraint using JAX autodiff"""
+        x_jax = jnp.array(x_np)
+        grad = grad_constraint_jax(x_jax)
+        return np.array(grad)
+    
+    # Tracking for AD-based optimization (lightweight - no re-solving)
+    x_path_ad = []
+    objective_history_ad = []
+    grad_norm_history_ad = []
+    
+    def callback_ad_simple(intermediate_result):
+        """Lightweight callback - just records basic info without re-solving"""
+        x_path_ad.append(intermediate_result.x.copy())
+        objective_history_ad.append(intermediate_result.fun)
+        grad_norm_history_ad.append(np.linalg.norm(intermediate_result.lagrangian_grad))
+        print(f"  Iter {len(x_path_ad):3d}: obj={intermediate_result.fun:.6f}, "
+              f"||∇L||={np.linalg.norm(intermediate_result.lagrangian_grad):.2e}, "
+              f"v={intermediate_result.x[0]:.2f}")
+    
+    print("\nRunning optimization with AD-based gradients...")
+    print("(Using scipy.optimize.minimize with trust-constr method)")
+    print("(Limited to 20 iterations for demonstration)")
+    print("-" * 60)
+    
+    # Start from close to the optimum to reduce iterations needed
+    x0_ad = np.array([18.0, -50.0, -50.0, 153500.0])
+    bounds_ad = [(0.1, 30), (-1e8, 1e8), (-1e8, 1e8), (0, 1e8)]
+    
+    constraints_ad = {
+        'type': 'eq',
+        'fun': constraint_with_ad,
+        'jac': constraint_grad_with_ad
+    }
+    
+    result_ad = optimize.minimize(
+        objective_with_ad_grad,
+        x0=x0_ad,
+        method='trust-constr',
+        jac=gradient_with_ad,
+        bounds=bounds_ad,
+        constraints=constraints_ad,
+        callback=callback_ad_simple,
+        options={'maxiter': 20, 'verbose': 0, 'gtol': 1e-4}
+    )
+    
+    print("-" * 60)
+    print("\n" + "=" * 50)
+    print("AD-BASED OPTIMIZATION RESULTS")
+    print("=" * 50)
+    print(f"Converged: {result_ad.success}")
+    print(f"Message: {result_ad.message}")
+    print(f"Number of iterations: {result_ad.nit}")
+    print("-" * 50)
+    print("Optimal Design Variables:")
+    print(f"  v (fan velocity)   = {result_ad.x[0]:.4f} m/s")
+    print(f"  a (heat coeff)     = {result_ad.x[1]:.4f} W/m⁴")
+    print(f"  b (heat coeff)     = {result_ad.x[2]:.4f} W/m⁴")
+    print(f"  c (heat coeff)     = {result_ad.x[3]:.4f} W/m³")
+    print("-" * 50)
+    
+    # Evaluate at optimum
+    x_opt_jax = jnp.array(result_ad.x)
+    u_opt = jax_solve_steady_state(x_opt_jax[0], x_opt_jax[1], x_opt_jax[2], x_opt_jax[3],
+                                    X_jax, Y_jax, JAX_PARAMS)
+    opt_max_T = float(jnp.max(u_opt))
+    opt_eta = float(jax_fan_efficiency(x_opt_jax[0]))
+    
+    print("Objective Function Components:")
+    print(f"  Max Temperature    = {opt_max_T:.2f} K ({opt_max_T - 273:.2f} °C)")
+    print(f"  Fan Efficiency η   = {opt_eta:.4f}")
+    print(f"  Objective Value    = {result_ad.fun:.6f}")
+    print("-" * 50)
+    print("Constraint Satisfaction:")
+    print(f"  Constraint Error   = {constraint_with_ad(result_ad.x):.6f} W")
+    print("=" * 50)
+    
+    # Plot AD optimization convergence
+    if len(x_path_ad) > 0:
+        x_path_ad_arr = np.array(x_path_ad)
+        iters_ad = np.arange(len(x_path_ad_arr))
+        
+        # Gradient of Lagrangian convergence (AD)
+        plt.figure(figsize=(8, 5))
+        plt.semilogy(iters_ad, grad_norm_history_ad, 'b-', linewidth=1.5)
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\|\nabla \mathcal{L}\|$')
+        plt.title('Gradient of Lagrangian (AD-based Optimization)')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('plots/gradient_lagrangian_AD.png', dpi=150)
+        plt.show()
+        
+        # Objective function (AD)
+        plt.figure(figsize=(8, 5))
+        plt.plot(iters_ad, objective_history_ad, 'r-', linewidth=1.5)
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\omega_1 \max(T)/273 - \omega_2 \eta$')
+        plt.title('Objective Function (AD-based Optimization)')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('plots/objective_function_AD.png', dpi=150)
+        plt.show()
+        
+        # Design variables (AD)
+        fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+        axes[0, 0].plot(iters_ad, x_path_ad_arr[:, 0], 'b-', linewidth=1.5)
+        axes[0, 0].set_ylabel('v [m/s]')
+        axes[0, 0].set_title('Fan Velocity')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        axes[0, 1].plot(iters_ad, x_path_ad_arr[:, 1], 'r-', linewidth=1.5)
+        axes[0, 1].set_ylabel('a [W/m⁴]')
+        axes[0, 1].set_title('Heat Coeff a')
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        axes[1, 0].plot(iters_ad, x_path_ad_arr[:, 2], 'g-', linewidth=1.5)
+        axes[1, 0].set_xlabel('Iteration')
+        axes[1, 0].set_ylabel('b [W/m⁴]')
+        axes[1, 0].set_title('Heat Coeff b')
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        axes[1, 1].plot(iters_ad, x_path_ad_arr[:, 3], 'm-', linewidth=1.5)
+        axes[1, 1].set_xlabel('Iteration')
+        axes[1, 1].set_ylabel('c [W/m³]')
+        axes[1, 1].set_title('Heat Coeff c')
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.suptitle('Design Variables (AD-based Optimization)', fontsize=12)
+        plt.tight_layout()
+        plt.savefig('plots/design_vars_AD.png', dpi=150)
+        plt.show()
+        
     ## Bounds for inputs
     # v: fan velocity [0, 30] m/s (physical limits)
     # a, b: heat distribution coefficients (unconstrained)
