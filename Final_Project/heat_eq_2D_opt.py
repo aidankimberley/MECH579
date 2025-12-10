@@ -486,8 +486,8 @@ if __name__ == "__main__":
     ## Creating the initial guess
     # For 10W total power in 0.04³ m³ volume with a=b=0: c = 10 / (0.04 * 0.04 * 0.04) ≈ 156250 W/m³
     v0 = 15.0  # m/s - start at reasonable fan velocity
-    a0 = 0.0   # Start with uniform heat generation
-    b0 = 0.0
+    a0 = 10.0   # Start with uniform heat generation
+    b0 = 10.0
     c0 = 156250.0  # This gives approximately 10W total
     x0 = [v0, a0, b0, c0]
     heq.verbose = False

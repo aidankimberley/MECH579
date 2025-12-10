@@ -37,9 +37,8 @@ EXT_NU = 1.506e-5  # m²/s kinematic viscosity
 EXT_T = 293.0  # K (20°C)
 
 # Numerical parameters
-CFL = 0.1  # Conservative for stability
-MAX_ITER = 4000  # Reduced for faster optimization (temperature effect is small)
-TOLERANCE = 1e-3
+CFL = 0.25  # Slightly increased for faster evolution
+MAX_ITER = 500  # Increased to better match FD convergence (FD runs until tol=1e-3)  
 
 # Derived mesh quantities
 dx = CPU_X / (N - 1)
@@ -116,8 +115,8 @@ def h_top(v):
 
 
 def initial_condition():
-    """Initial temperature distribution - start at ambient"""
-    return jnp.ones_like(X) * EXT_T
+    """Initial temperature distribution (Cosine profile to match FD version)"""
+    return 70 * jnp.sin(X * jnp.pi / CPU_X) * jnp.sin(Y * jnp.pi / CPU_Y) + EXT_T
 
 
 # ============================================================================
@@ -255,6 +254,27 @@ def solve_steady_state(v, a, b, c, num_iter=MAX_ITER):
     final_u = lax.fori_loop(0, num_iter, body_fun, u0)
     
     return final_u
+
+
+def solve_steady_state_with_error(v, a, b, c, num_iter=MAX_ITER):
+    """
+    Solve to steady state and return both the field and the convergence error.
+    
+    Returns (u_final, error) where error = ||u_new - u_old||_inf
+    """
+    u0 = initial_condition()
+    u_prev = u0
+    
+    def body_fun(i, u):
+        return step_forward(u, v, a, b, c)
+    
+    final_u = lax.fori_loop(0, num_iter, body_fun, u0)
+    
+    # Compute error by doing one more step
+    u_one_more = step_forward(final_u, v, a, b, c)
+    error = jnp.linalg.norm(u_one_more - final_u, jnp.inf)
+    
+    return final_u, error
 
 
 # ============================================================================
@@ -506,14 +526,17 @@ def run_optimization():
         print(f"  Iter {len(x_path):3d}: obj={obj_val:.6f}, maxT={max_T-273:.2f}°C, "
               f"η={eta:.4f}, |∇f|={np.linalg.norm(grad_obj):.2e}, |∇L|={grad_L_norm:.2e}, "
               f"vars: v={xk[0]:.2f}, a={xk[1]:.2f}, b={xk[2]:.2f}, c={xk[3]:.2f}")
+        if len(x_path) <= 2:  # Print gradient breakdown for first few iterations
+            print(f"      Gradients: ∇f_v={grad_obj[0]:.6e}, ∇f_a={grad_obj[1]:.6e}, "
+                  f"∇f_b={grad_obj[2]:.6e}, ∇f_c={grad_obj[3]:.6e}")
         
         return False  # Don't stop optimization
     
     # Initial guess (same as heat_eq_2D_opt.py)
     v0 = 15.0
-    a0 = 10.0
-    b0 = 10.0
-    c0 = 15625.0  # ≈ NOT 10W total, just for testing
+    a0 = -30.0
+    b0 = -30.0
+    c0 = 156250.0  # ≈ NOT 10W total, just for testing
     x0 = np.array([v0, a0, b0, c0])
     
     # Bounds (same as heat_eq_2D_opt.py)
@@ -540,17 +563,25 @@ def run_optimization():
     print("-"*60)
     
     # Run optimization with JAX gradients
-    print("\nStarting optimization with JAX AD gradients (trust-constr)...")
+    print("\nStarting optimization with JAX AD gradients (SLSQP)...")
+    
+    # SLSQP callback wrapper
+    def slsqp_callback(xk):
+        class Result: pass
+        res = Result()
+        res.x = xk
+        res.lagrangian_grad = None  # SLSQP doesn't provide this easily
+        callback(res)
     
     result = optimize.minimize(
         objective_wrapper,
         x0=x0,
-        method='trust-constr',
+        method='SLSQP',
         jac=gradient_wrapper,
         bounds=bounds,
         constraints=constraints,
-        callback=callback,
-        options={'maxiter': 500, 'verbose': 0, 'gtol': 1e-6}
+        callback=slsqp_callback,
+        options={'maxiter': 500, 'ftol': 1e-8, 'disp': True}
     )
     
     # Final solution
@@ -662,10 +693,24 @@ def run_optimization():
     
     axes[1].plot(iterations, x_path[:, 1], 'r-', linewidth=1.5)
     axes[1].set_ylabel(r'$a$ [W/m$^4$]')
+    # Set y-limits to show variation around the mean value
+    a_mean = np.mean(x_path[:, 1])
+    a_range = np.max(x_path[:, 1]) - np.min(x_path[:, 1])
+    if a_range < 1e-6:  # If essentially constant, show small window
+        axes[1].set_ylim(a_mean - 0.1, a_mean + 0.1)
+    else:
+        axes[1].set_ylim(a_mean - 1.5 * a_range, a_mean + 1.5 * a_range)
     axes[1].grid(True, alpha=0.3)
     
     axes[2].plot(iterations, x_path[:, 2], 'g-', linewidth=1.5)
     axes[2].set_ylabel(r'$b$ [W/m$^4$]')
+    # Set y-limits to show variation around the mean value
+    b_mean = np.mean(x_path[:, 2])
+    b_range = np.max(x_path[:, 2]) - np.min(x_path[:, 2])
+    if b_range < 1e-6:  # If essentially constant, show small window
+        axes[2].set_ylim(b_mean - 0.1, b_mean + 0.1)
+    else:
+        axes[2].set_ylim(b_mean - 1.5 * b_range, b_mean + 1.5 * b_range)
     axes[2].grid(True, alpha=0.3)
     
     axes[3].plot(iterations, x_path[:, 3], 'm-', linewidth=1.5)
@@ -696,6 +741,53 @@ def run_optimization():
 
 
 # ============================================================================
+# Convergence Comparison
+# ============================================================================
+
+def compare_convergence(v, a, b, c):
+    """
+    Compare steady-state convergence between JAX (fixed iterations) and 
+    estimate what error the JAX solver achieves.
+    
+    Returns convergence metrics for the JAX solver.
+    """
+    print("\n" + "="*60)
+    print("STEADY-STATE CONVERGENCE COMPARISON")
+    print("="*60)
+    
+    # JAX version with error computation
+    print(f"\nJAX Solver (MAX_ITER={MAX_ITER}, CFL={CFL}):")
+    u_jax, error_jax = solve_steady_state_with_error(v, a, b, c, num_iter=MAX_ITER)
+    max_T_jax = float(jnp.max(u_jax))
+    
+    print(f"  Final max temperature: {max_T_jax:.2f} K ({max_T_jax-273:.2f} °C)")
+    print(f"  Convergence error (||u_new - u_old||_inf): {error_jax:.6e}")
+    
+    # Check convergence at different iteration counts
+    print(f"\nConvergence at different iteration counts:")
+    for n_iter in [5000, 10000, 20000, 50000, MAX_ITER]:
+        if n_iter <= MAX_ITER:
+            u_test, err_test = solve_steady_state_with_error(v, a, b, c, num_iter=n_iter)
+            max_T_test = float(jnp.max(u_test))
+            print(f"  {n_iter:6d} iterations: error={err_test:.6e}, maxT={max_T_test:.2f}K")
+    
+    # Compare with FD target tolerance
+    fd_tolerance = 1e-3
+    print(f"\nFD Version target tolerance: {fd_tolerance:.0e}")
+    print(f"JAX Version final error:      {error_jax:.6e}")
+    
+    if error_jax < fd_tolerance:
+        print(f"✓ JAX solver is MORE converged than FD target")
+    elif error_jax < 10 * fd_tolerance:
+        print(f"≈ JAX solver is SIMILARLY converged to FD target")
+    else:
+        print(f"✗ JAX solver is LESS converged than FD target")
+        print(f"  Consider increasing MAX_ITER or adjusting CFL")
+    
+    return u_jax, error_jax
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -706,6 +798,10 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--optimize':
         # Run full optimization
         run_optimization()
+    elif len(sys.argv) > 1 and sys.argv[1] == '--compare-convergence':
+        # Compare convergence with FD version
+        v0, a0, b0, c0 = 15.0, 10.0, 10.0, 156250.0
+        compare_convergence(v0, a0, b0, c0)
     else:
         # Run AD vs FD comparison (default)
         # Initial design point
