@@ -8,6 +8,7 @@ from functools import partial
 from scipy import optimize
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import os
 
 
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -490,6 +491,10 @@ def run_solver_jax(u0: jnp.ndarray,
 
 # Optimization with JAX-based objective/constraint
 def run_ad():
+    # Setup plots directory
+    save_dir = os.path.join(os.path.dirname(__file__), 'plots')
+    os.makedirs(save_dir, exist_ok=True)
+
     cpu_x = 0.04
     cpu_y = 0.04
     cpu_z = 0.04
@@ -518,6 +523,7 @@ def run_ad():
     contour1 = ax.contourf(heq.X, heq.Y, heq.u - 273.0)
     fig.colorbar(contour1, ax=ax)
     plt.title("Initial condition (°C)")
+    plt.savefig(os.path.join(save_dir, 'initial_condition.png'))
     plt.show()
 
     # Optimization parameters
@@ -660,6 +666,7 @@ def run_ad():
     contour3 = ax.contourf(heq.X, heq.Y, u_opt - 273.0)
     fig.colorbar(contour3, ax=ax)
     plt.title("Optimal temperature field (°C)")
+    plt.savefig(os.path.join(save_dir, 'optimal_temperature_field.png'))
     plt.show()
 
     x_list = iter_log["x"]
@@ -690,6 +697,7 @@ def run_ad():
     ax1.grid(True)
     ax1.legend()
     fig1.tight_layout()
+    fig1.savefig(os.path.join(save_dir, 'objective_function_AD.png'))
 
     # 2) ||∇L||
     fig2, ax2 = plt.subplots()
@@ -700,6 +708,7 @@ def run_ad():
     ax2.grid(True)
     ax2.legend()
     fig2.tight_layout()
+    fig2.savefig(os.path.join(save_dir, 'gradient_lagrangian_AD.png'))
 
     # 3) T_max
     fig3, ax3 = plt.subplots()
@@ -710,6 +719,7 @@ def run_ad():
     ax3.grid(True)
     ax3.legend()
     fig3.tight_layout()
+    fig3.savefig(os.path.join(save_dir, 'max_temperature_AD.png'))
 
     # 4) Efficiency
     fig4, ax4 = plt.subplots()
@@ -720,6 +730,7 @@ def run_ad():
     ax4.grid(True)
     ax4.legend()
     fig4.tight_layout()
+    fig4.savefig(os.path.join(save_dir, 'fan_efficiency_AD.png'))
 
     # 5) Power and constraint
     fig5, ax5 = plt.subplots(1, 2, figsize=(12, 6))
@@ -737,6 +748,7 @@ def run_ad():
     ax5[1].legend()
     ax5[1].grid(True)
     fig5.tight_layout()
+    fig5.savefig(os.path.join(save_dir, 'power_constraint_AD.png'))
 
     # 6) Design parameters
     fig6, ax6 = plt.subplots(2, 2, figsize=(12, 6))
@@ -766,4 +778,5 @@ def run_ad():
 
     fig6.suptitle("Design Parameters - AD")
     fig6.tight_layout()
+    fig6.savefig(os.path.join(save_dir, 'design_parameters_AD.png'))
     plt.show()

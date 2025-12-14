@@ -5,6 +5,7 @@ from scipy import optimize
 import numpy as np
 import jax
 import jax.numpy as jnp
+import os
 
 
 mpl.rcParams['axes.formatter.useoffset'] = False
@@ -238,6 +239,10 @@ class HeatEquation2D:
 
 
 def run_fd():
+    # Setup plots directory
+    save_dir = os.path.join(os.path.dirname(__file__), 'plots')
+    os.makedirs(save_dir, exist_ok=True)
+
     # Physical Dimensions
     cpu_x = 0.04  # m
     cpu_y = 0.04  # m
@@ -278,6 +283,7 @@ def run_fd():
     fig, ax = plt.subplots()
     contour1 = ax.contourf(heq.X,heq.Y,heq.u - 273)
     fig.colorbar(contour1,ax=ax)
+    plt.savefig(os.path.join(save_dir, 'initial_condition.png'))
     plt.show()
     ## Setting objective function
     heq.max_iter = 5e4
@@ -452,6 +458,7 @@ def run_fd():
     ax1.grid(True)
     ax1.legend()
     fig1.tight_layout()
+    fig1.savefig(os.path.join(save_dir, 'objective_function_FD.png'))
 
     # 2) ||∇L||
     fig2, ax2 = plt.subplots()
@@ -462,6 +469,7 @@ def run_fd():
     ax2.grid(True)
     ax2.legend()
     fig2.tight_layout()
+    fig2.savefig(os.path.join(save_dir, 'gradient_lagrangian_FD.png'))
 
     # 3) T_max
     fig3, ax3 = plt.subplots()
@@ -472,6 +480,7 @@ def run_fd():
     ax3.grid(True)
     ax3.legend()
     fig3.tight_layout()
+    fig3.savefig(os.path.join(save_dir, 'max_temperature_FD.png'))
 
     # 4) Efficiency
     fig4, ax4 = plt.subplots()
@@ -482,6 +491,7 @@ def run_fd():
     ax4.grid(True)
     ax4.legend()
     fig4.tight_layout()
+    fig4.savefig(os.path.join(save_dir, 'fan_efficiency_FD.png'))
 
     fig5, ax5 = plt.subplots(1, 2, figsize=(12, 6))
     ax5[0].plot(iters, P_list, label='Power')
@@ -498,6 +508,7 @@ def run_fd():
     ax5[1].legend()
     ax5[1].grid(True)
     fig5.tight_layout()
+    fig5.savefig(os.path.join(save_dir, 'power_constraint_FD.png'))
 
     fig6, ax6 = plt.subplots(2, 2, figsize=(12, 6))
     ax6[0, 0].plot(iters, v_list, label="v - FD")
@@ -526,9 +537,11 @@ def run_fd():
 
     fig6.suptitle("Design Parameters - FD")
     fig6.tight_layout()
+    fig6.savefig(os.path.join(save_dir, 'design_parameters_FD.png'))
 
     ## Plot optimal solution
     fig, ax = plt.subplots()
     contour3 = ax.contourf(heq.X, heq.Y, heq.u - 273)
     fig.colorbar(contour3, ax=ax)
+    plt.savefig(os.path.join(save_dir, 'optimal_temperature_field_FD.png'))
     plt.show()
