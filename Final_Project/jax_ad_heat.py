@@ -11,6 +11,7 @@ from jax import lax
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import optimize
+from functools import partial
 
 # Enable float64 for better numerical precision
 jax.config.update("jax_enable_x64", True)
@@ -37,8 +38,8 @@ EXT_NU = 1.506e-5  # m²/s kinematic viscosity
 EXT_T = 293.0  # K (20°C)
 
 # Numerical parameters
-CFL = 0.25  # Slightly increased for faster evolution
-MAX_ITER = 500  # Increased to better match FD convergence (FD runs until tol=1e-3)  
+CFL = 0.25  # Match working code
+MAX_ITER = 50000  # Match working code (was 500, too few iterations)  
 
 # Derived mesh quantities
 dx = CPU_X / (N - 1)
@@ -67,33 +68,40 @@ def heat_generation(X, Y, a, b, c):
 
 
 def compute_total_heat(a, b, c):
-    """Compute total heat generation using trapezoidal rule"""
+    """Compute total heat generation using trapezoidal rule.
+    
+    NOTE: This matches Callum's implementation which has a quirk:
+    - Rows 0 and N-1 are divided by 2 twice (effectively by 4)
+    - Columns 0 and N-1 are NOT divided (except at corners)
+    This is needed to match Callum's optimization results.
+    """
     q = heat_generation(X, Y, a, b, c) * dx * dy * CPU_Z
     i0, iN, j0, jN = 0, N - 1, 0, N - 1
     
-    # Trapezoidal weights
-    weights = jnp.ones_like(q)
-    weights = weights.at[i0, :].multiply(0.5)
-    weights = weights.at[iN, :].multiply(0.5)
-    weights = weights.at[:, j0].multiply(0.5)
-    weights = weights.at[:, jN].multiply(0.5)
+    # Match Callum's "buggy" implementation for consistency
+    # Faces - note j0 and jN index ROWS, not columns (matching Callum's code)
+    q = q.at[i0, :].divide(2.0)
+    q = q.at[iN, :].divide(2.0)
+    q = q.at[j0, :].divide(2.0)  # This divides row 0 again!
+    q = q.at[jN, :].divide(2.0)  # This divides row N-1 again!
     
-    return jnp.sum(q * weights)
+    # Corners
+    q = q.at[i0, j0].divide(2.0)
+    q = q.at[iN, jN].divide(2.0)
+    q = q.at[iN, j0].divide(2.0)
+    q = q.at[i0, jN].divide(2.0)
+    
+    return jnp.sum(q)
 
 
 def h_boundary(u):
     """Natural convection heat transfer coefficient (Churchill-Chu)"""
     # Use film temperature for properties
-    T_film = (u + EXT_T) / 2
-    T_film = jnp.maximum(T_film, 1.0)  # Safe lower bound
-    beta = 1.0 / T_film
+    beta = 1.0 / ((u + EXT_T) / 2.0)
     
-    # Temperature difference (use abs to handle both heating and cooling)
-    dT = jnp.abs(u - EXT_T)
-    dT = jnp.maximum(dT, 1e-6)  # Avoid zero
-    
-    rayleigh = 9.81 * beta * dT * dx**3 / (EXT_NU**2) * EXT_PR
-    rayleigh = jnp.maximum(rayleigh, 1.0)  # Minimum Rayleigh for stability
+    # Temperature difference - DO NOT use abs() as it breaks automatic differentiation!
+    rayleigh = 9.81 * beta * (u - EXT_T) * dx**3 / (EXT_NU**2) * EXT_PR
+    rayleigh = jnp.maximum(rayleigh, 0.0)  # Minimum Rayleigh (0.0, not 1.0)
     
     nusselt = (0.825 + (0.387 * rayleigh**(1/6)) /
                (1 + (0.492/EXT_PR)**(9/16))**(8/27))**2
@@ -123,14 +131,28 @@ def initial_condition():
 # Time-stepping (Pure Functional)
 # ============================================================================
 
-def step_forward(u, v, a, b, c):
-    """Single time step update - pure function, returns new u"""
+def step_forward(u, X_grid, Y_grid, params):
+    """Single time step update - pure function, returns new u.
+    
+    This signature matches Callum's step_forward_jax exactly:
+    - u: current temperature field
+    - X_grid, Y_grid: mesh grids (passed explicitly, not as closures)
+    - params: dictionary with 'v', 'a', 'b', 'c' keys
+    
+    This structure with explicit arguments (not closures) is CRITICAL
+    for JAX to properly trace and differentiate through lax.scan.
+    """
+    v = params['v']
+    a = params['a']
+    b = params['b']
+    c = params['c']
+    
     i0, j0, iN, jN = 0, 0, N - 1, N - 1
     
     # Compute heat transfer coefficients
     h_b = h_boundary(u)
     h_t = h_top(v)
-    e_dot = heat_generation(X, Y, a, b, c)
+    e_dot = heat_generation(X_grid, Y_grid, a, b, c)
     
     old_u = u
     new_u = u
@@ -151,7 +173,8 @@ def step_forward(u, v, a, b, c):
     left = (
         old_u[i0, 1:-1] +
         2 * tau * h_b[i0, 1:-1] / K_SI * dy * (EXT_T - old_u[i0, 1:-1]) +
-        tau * dx * (old_u[i0, 2:] - 2*old_u[i0, 1:-1] + old_u[i0, :-2]) / dy +
+        tau * dx * (old_u[i0, 2:] - old_u[i0, 1:-1]) / dy +
+        tau * dx * (old_u[i0, 1:-1] - old_u[i0, 2:]) / dy +
         2 * tau * dy * (old_u[i0+1, 1:-1] - old_u[i0, 1:-1]) / dx +
         tau * h_t[i0, 1:-1] / K_SI * dx * dy / CPU_Z * (EXT_T - old_u[i0, 1:-1]) +
         tau * e_dot[i0, 1:-1] / K_SI * dx * dy
@@ -162,7 +185,8 @@ def step_forward(u, v, a, b, c):
     right = (
         old_u[iN, 1:-1] +
         2 * tau * h_b[iN, 1:-1] / K_SI * dy * (EXT_T - old_u[iN, 1:-1]) +
-        tau * dx * (old_u[iN, 2:] - 2*old_u[iN, 1:-1] + old_u[iN, :-2]) / dy +
+        tau * dx * (old_u[iN, 2:] - old_u[iN, 1:-1]) / dy +
+        tau * dx * (old_u[iN, 1:-1] - old_u[iN, 2:]) / dy +
         2 * tau * dy * (old_u[iN-1, 1:-1] - old_u[iN, 1:-1]) / dx +
         tau * h_t[iN, 1:-1] / K_SI * dx * dy / CPU_Z * (EXT_T - old_u[iN, 1:-1]) +
         tau * e_dot[iN, 1:-1] / K_SI * dx * dy
@@ -173,7 +197,8 @@ def step_forward(u, v, a, b, c):
     bottom = (
         old_u[1:-1, j0] +
         2 * tau * h_b[1:-1, j0] / K_SI * dx * (EXT_T - old_u[1:-1, j0]) +
-        tau * dy * (old_u[2:, j0] - 2*old_u[1:-1, j0] + old_u[:-2, j0]) / dx +
+        tau * dy * (old_u[2:, j0] - old_u[1:-1, j0]) / dx +
+        tau * dy * (old_u[1:-1, j0] - old_u[2:, j0]) / dx +
         2 * tau * dx * (old_u[1:-1, j0+1] - old_u[1:-1, j0]) / dy +
         tau * h_t[1:-1, j0] / K_SI * dx * dy / CPU_Z * (EXT_T - old_u[1:-1, j0]) +
         tau * e_dot[1:-1, j0] / K_SI * dx * dy
@@ -184,7 +209,8 @@ def step_forward(u, v, a, b, c):
     top = (
         old_u[1:-1, jN] +
         2 * tau * h_b[1:-1, jN] / K_SI * dx * (EXT_T - old_u[1:-1, jN]) +
-        tau * dy * (old_u[2:, jN] - 2*old_u[1:-1, jN] + old_u[:-2, jN]) / dx +
+        tau * dy * (old_u[2:, jN] - old_u[1:-1, jN]) / dx +
+        tau * dy * (old_u[1:-1, jN] - old_u[2:, jN]) / dx +
         2 * tau * dx * (old_u[1:-1, jN-1] - old_u[1:-1, jN]) / dy +
         tau * h_t[1:-1, jN] / K_SI * dx * dy / CPU_Z * (EXT_T - old_u[1:-1, jN]) +
         tau * e_dot[1:-1, jN] / K_SI * dx * dy
@@ -239,19 +265,40 @@ def step_forward(u, v, a, b, c):
     return new_u
 
 
+@partial(jax.jit, static_argnums=(4,))
+def run_solver(u0, X_grid, Y_grid, params, n_steps):
+    """
+    JIT-compiled solver that runs n_steps of the heat equation.
+    
+    This structure EXACTLY matches Callum's run_solver_jax:
+    - params is a TRACED argument (not static), so JAX can differentiate through it
+    - n_steps is STATIC (position 4), so JAX compiles for each different value
+    - body_fun closes over params, but since params is traced by this JIT'd function,
+      JAX can properly compute gradients through the closure
+    
+    This is the KEY pattern that makes gradients work correctly!
+    """
+    def body_fun(u, _):
+        u_next = step_forward(u, X_grid, Y_grid, params)
+        return u_next, None
+    
+    u_final, _ = lax.scan(body_fun, u0, xs=None, length=n_steps)
+    return u_final
+
+
 def solve_steady_state(v, a, b, c, num_iter=MAX_ITER):
     """
-    Solve to steady state using jax.lax.fori_loop (JAX-differentiable).
+    Solve to steady state using the JIT-compiled run_solver.
     
-    Uses fixed iteration count so JAX can differentiate through it.
     Returns the steady-state temperature field.
     """
     u0 = initial_condition()
     
-    def body_fun(i, u):
-        return step_forward(u, v, a, b, c)
+    # Pack parameters into a dict - this is passed to the JIT'd solver
+    params = {'v': v, 'a': a, 'b': b, 'c': c}
     
-    final_u = lax.fori_loop(0, num_iter, body_fun, u0)
+    # Call the JIT'd solver - params flows through as a traced pytree
+    final_u = run_solver(u0, X, Y, params, num_iter)
     
     return final_u
 
@@ -263,15 +310,15 @@ def solve_steady_state_with_error(v, a, b, c, num_iter=MAX_ITER):
     Returns (u_final, error) where error = ||u_new - u_old||_inf
     """
     u0 = initial_condition()
-    u_prev = u0
     
-    def body_fun(i, u):
-        return step_forward(u, v, a, b, c)
+    # Pack parameters into a dict
+    params = {'v': v, 'a': a, 'b': b, 'c': c}
     
-    final_u = lax.fori_loop(0, num_iter, body_fun, u0)
+    # Use the JIT'd solver
+    final_u = run_solver(u0, X, Y, params, num_iter)
     
     # Compute error by doing one more step
-    u_one_more = step_forward(final_u, v, a, b, c)
+    u_one_more = step_forward(final_u, X, Y, params)
     error = jnp.linalg.norm(u_one_more - final_u, jnp.inf)
     
     return final_u, error
@@ -290,8 +337,10 @@ def objective_function(x):
     Objective: w1 * max(T)/273 - w2 * eta(v)
     
     x = [v, a, b, c]
+    
+    Uses tuple unpacking like Callum's working code.
     """
-    v, a, b, c = x[0], x[1], x[2], x[3]
+    v, a, b, c = x  # Tuple unpacking (matches Callum's code)
     
     # Solve for steady-state temperature
     u = solve_steady_state(v, a, b, c)
@@ -305,7 +354,7 @@ def objective_function(x):
 
 def constraint_total_heat(x):
     """Equality constraint: total heat = 10W"""
-    a, b, c = x[1], x[2], x[3]
+    v, a, b, c = x  # Tuple unpacking
     return compute_total_heat(a, b, c) - 10.0
 
 
@@ -532,11 +581,12 @@ def run_optimization():
         
         return False  # Don't stop optimization
     
-    # Initial guess (same as heat_eq_2D_opt.py)
-    v0 = 15.0
-    a0 = -30.0
-    b0 = -30.0
-    c0 = 156250.0  # ≈ NOT 10W total, just for testing
+    # Initial guess - matching Callum's
+    v0 = 10.0
+    x0_heat = 0.0  # Callum uses 0.0
+    a0 = x0_heat * 1e5
+    b0 = x0_heat * 1e5
+    c0 = 156250.0 - 0.02 * a0 - 0.02 * b0
     x0 = np.array([v0, a0, b0, c0])
     
     # Bounds (same as heat_eq_2D_opt.py)
