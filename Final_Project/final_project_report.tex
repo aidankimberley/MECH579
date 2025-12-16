@@ -1,0 +1,263 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{geometry}
+\usepackage{siunitx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{cleveref}
+
+\geometry{margin=1in}
+\sisetup{inter-unit-product = \ensuremath{{}\cdot{}}}
+
+\title{\textbf{MECH 579 Final Project}\\ \large 2D Heat Equation Optimization via Finite Differences and Automatic Differentiation}
+\author{Aidan Kimberley \and Lucas Bessai \\ \small McGill University}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+This report details the numerical optimization of a 2D heat conduction problem to minimize a weighted objective function of maximum temperature and fan power consumption. We compare two gradient computation techniques: Finite Differences (FD) and Automatic Differentiation (AD) using JAX. The optimization is constrained by a global heat generation requirement of \SI{10}{W} on a $0.04 \times \SI{0.04}{m}$ silicon chip.
+
+\section{Mathematical Formulation}
+
+\subsection{Governing Equations & Optimization}
+The system is governed by the 2D Poisson equation with a spatially variable source term $q(x,y) = ax + by + c$. The optimization problem is defined as:
+
+\begin{equation}
+    \min_{\mathbf{u}} J(\mathbf{u}) = \omega_1 \frac{\max(T)}{\SI{273.15}{K}} - \omega_2 \eta(v) \quad \text{s.t.} \quad \int_{\Omega} q \, dV = \SI{10}{W}
+\end{equation}
+
+where $\mathbf{u} = [v, a, b, c]^\intercal$ contains the fan velocity and heat generation coefficients, and $\eta(v)$ is the fan efficiency curve.
+
+\subsection{Gradient Computation}
+Two methods are employed to compute $\nabla J$:
+\begin{enumerate}
+    \item \textbf{Finite Differences (FD):} Uses forward differences with step size $h$.
+    \item \textbf{Automatic Differentiation (AD):} Uses \texttt{jax.grad} to compute exact gradients via the computational graph.
+\end{enumerate}
+
+\section{Numerical Analysis and Validation}
+
+\subsection{Gradient Convergence}
+To validate the FD approach, we compared it against the exact AD gradients. \Cref{fig:fd_convergence} illustrates that a step size of $h=10^{-3}$ provides the optimal balance between truncation error and floating-point cancellation.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{plots/fd_convergence.png}
+    \caption{Convergence of Finite Difference gradients to the exact AD baseline.}
+    \label{fig:fd_convergence}
+\end{figure}
+
+\section{Optimization Results (Finite Differences)}
+
+The optimization was performed using the SciPy \texttt{trust-constr} algorithm.
+
+\subsection{Convergence History}
+The solver successfully reached KKT convergence. The objective function decreases monotonically (\cref{fig:objective_convergence}), and the Lagrangian gradient vanishes (\cref{fig:grad_lagrangian}), indicating a local minimum.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/objective_function.png}
+        \caption{Objective function minimization}
+        \label{fig:objective_convergence}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/gradient_lagrangian.png}
+        \caption{Gradient of the Lagrangian}
+        \label{fig:grad_lagrangian}
+    \end{subfigure}
+    \caption{Optimization convergence history (FD).}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{plots/gradient_objective.png}
+    \caption{Evolution of the Objective Function Gradient (FD).}
+    \label{fig:grad_objective}
+\end{figure}
+
+\subsection{Design Variable Evolution}
+The optimal fan velocity converges to the upper bound of the efficient range.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{plots/velocity_path.png}
+    \caption{Evolution of fan velocity $v$, converging to $\approx \SI{20}{m.s^{-1}}$.}
+    \label{fig:velocity_path}
+\end{figure}
+
+The heat generation parameters $a, b, c$ evolve to distribute heat generation spatially. The negative values for $a$ and $b$ shift the heat load toward the origin, leveraging the thermal boundary layer development.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{plots/abc_parameters.png}
+    \caption{Evolution of heat generation coefficients $a, b, c$.}
+    \label{fig:abc_parameters}
+\end{figure}
+
+\subsection{Objective Components and Constraints}
+The optimization trades off a slight increase in maximum temperature to maximize fan efficiency.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/max_temperature.png}
+        \caption{Maximum Temperature}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/fan_efficiency.png}
+        \caption{Fan Efficiency}
+    \end{subfigure}
+    \caption{Evolution of objective components (FD).}
+\end{figure}
+
+The total power constraint was satisfied throughout the process:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{plots/power_constraint.png}
+    \caption{Satisfaction of the \SI{10}{W} total generation constraint.}
+    \label{fig:constraint}
+\end{figure}
+
+\subsection{Optimal State}
+The final temperature distribution shows the combined effect of the optimized source term and convective cooling.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{plots/optimal_temperature_distribution.png}
+    \caption{Steady-state temperature field for the optimal design (FD).}
+    \label{fig:optimal_temp}
+\end{figure}
+
+\section{Validation via Automatic Differentiation (AD)}
+
+To confirm the results, the optimization was repeated using JAX. The AD results are virtually identical to the FD results, validating the correctness of the finite difference implementation.
+
+\subsection{AD Convergence Metrics}
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/objective_function_AD.png}
+        \caption{Objective Function}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/gradient_lagrangian_AD.png}
+        \caption{Lagrangian Gradient}
+    \end{subfigure}
+    \par\bigskip
+    \begin{subfigure}{0.6\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{plots/gradient_objective_AD.png}
+        \caption{Objective Gradient}
+    \end{subfigure}
+    \caption{AD Optimization History. The trajectory matches the FD implementation.}
+    \label{fig:ad_history}
+\end{figure}
+
+\subsection{AD Design Variables}
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/design_vars_AD.png}
+        \caption{Design Variables}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/max_temperature_AD.png}
+        \caption{Max Temperature}
+    \end{subfigure}
+    \par\bigskip
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{plots/fan_efficiency_AD.png}
+        \caption{Fan Efficiency}
+    \end{subfigure}
+    \caption{Evolution of design parameters using exact AD gradients.}
+    \label{fig:ad_vars}
+\end{figure}
+
+\subsection{AD Optimal State}
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/power_constraint_AD.png}
+        \caption{Constraint Satisfaction}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \includegraphics[width=\textwidth]{plots/optimal_temperature_AD.png}
+        \caption{Optimal Temperature Map}
+    \end{subfigure}
+    \caption{Final state validation using the JAX solver.}
+    \label{fig:ad_state}
+\end{figure}
+
+\section{Physical Analysis}
+
+\subsection{Fan Speed Plateau}
+A parametric sweep reveals why the optimizer favors $v \approx \SI{20}{m.s^{-1}}$. As seen in \cref{fig:fan_speed_cooling}, cooling performance plateaus beyond \SI{18.6}{m.s^{-1}}. Increasing velocity further yields diminishing thermal returns while degrading fan efficiency.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{plots/temp_vs_fanspeed.png}
+    \caption{Steady-state temperature response to fan velocity, showing the cooling plateau.}
+    \label{fig:fan_speed_cooling}
+\end{figure}
+
+\subsection{Pareto Frontier}
+The Pareto front (\cref{fig:pareto}) illustrates the trade-off between thermal performance and efficiency. The optimal velocity is remarkably stable at \SI{20}{m.s^{-1}} for the majority of weights, shifting only when temperature is prioritized almost exclusively.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{plots/pareto.png}
+    \caption{Pareto front showing the trade-off between max temperature and fan efficiency.}
+    \label{fig:pareto}
+\end{figure}
+
+The numerical results for the three specific weighting scenarios tested are summarized in \Cref{tab:pareto_results}.
+
+\begin{table}[H]
+\centering
+\caption{Pareto front optimization results for different weight combinations.}
+\label{tab:pareto_results}
+\begin{tabular}{ccccc}
+\toprule
+$\omega_1$ & $\omega_2$ & Max Temp. [\unit{\degreeCelsius}] & Efficiency $\eta$ & Velocity $v$ [\unit{m.s^{-1}}] \\
+\midrule
+0.001 & 0.999 & 48.45 & 0.8000 & 20.00 \\
+0.500 & 0.500 & 48.45 & 0.8000 & 20.00 \\
+0.999 & 0.001 & 48.44 & 0.7833 & 22.89 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion and Conclusions}
+
+The study successfully implemented PDE-constrained optimization using both FD and AD. 
+\begin{itemize}
+    \item \textbf{Methodology:} AD proved superior for gradient accuracy and ease of use (no step-size tuning), though the JAX implementation required fixed loop iterations (\texttt{jax.lax.scan}) rather than adaptive convergence.
+    \item \textbf{Physical Results:} The optimal design leverages the peak of the fan efficiency curve ($\approx \SI{20}{m.s^{-1}}$), as higher velocities provide negligible cooling benefits due to the Nusselt number plateau.
+\end{itemize}
+
+\section*{Code Structure}
+The implementation is split into \texttt{heat\_eq\_2D\_opt.py} (FD/SciPy) and \texttt{jax\_ad\_heat.py} (AD/JAX).
+
+\end{document}

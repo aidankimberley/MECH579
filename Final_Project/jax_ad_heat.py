@@ -12,6 +12,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import optimize
 from functools import partial
+# Import FD solver for final solution verification
+from heat_eq_2D_opt import HeatEquation2D
 
 # Enable float64 for better numerical precision
 jax.config.update("jax_enable_x64", True)
@@ -78,8 +80,8 @@ def compute_total_heat(a, b, c):
     q = heat_generation(X, Y, a, b, c) * dx * dy * CPU_Z
     i0, iN, j0, jN = 0, N - 1, 0, N - 1
     
-    # Match Callum's "buggy" implementation for consistency
-    # Faces - note j0 and jN index ROWS, not columns (matching Callum's code)
+    # Match 's "buggy" implementation for consistency
+    # Faces - note j0 and jN index ROWS, not columns (matching 's code)
     q = q.at[i0, :].divide(2.0)
     q = q.at[iN, :].divide(2.0)
     q = q.at[j0, :].divide(2.0)  # This divides row 0 again!
@@ -571,11 +573,11 @@ def run_optimization():
         # Note: We can track grad_L history too if we add a list for it
         # But here we just print it
         
-        # Print progress
-        print(f"  Iter {len(x_path):3d}: obj={obj_val:.6f}, maxT={max_T-273:.2f}°C, "
+        # Print progress (len(x_path) includes initial guess, so this is iteration number)
+        print(f"  Iter {len(x_path)-1:3d}: obj={obj_val:.6f}, maxT={max_T-273:.2f}°C, "
               f"η={eta:.4f}, |∇f|={np.linalg.norm(grad_obj):.2e}, |∇L|={grad_L_norm:.2e}, "
               f"vars: v={xk[0]:.2f}, a={xk[1]:.2f}, b={xk[2]:.2f}, c={xk[3]:.2f}")
-        if len(x_path) <= 2:  # Print gradient breakdown for first few iterations
+        if len(x_path) <= 3:  # Print gradient breakdown for first few iterations (including initial)
             print(f"      Gradients: ∇f_v={grad_obj[0]:.6e}, ∇f_a={grad_obj[1]:.6e}, "
                   f"∇f_b={grad_obj[2]:.6e}, ∇f_c={grad_obj[3]:.6e}")
         
@@ -612,6 +614,25 @@ def run_optimization():
     print(f"Initial total heat: {float(compute_total_heat(a0, b0, c0)):.4f} W")
     print("-"*60)
     
+    # Add initial guess to tracking lists (iteration 0)
+    x_jax0 = jnp.array(x0)
+    u0_ss = solve_steady_state(x0[0], x0[1], x0[2], x0[3])
+    obj_val0 = float(objective_jit(x_jax0))
+    max_T0 = float(jnp.max(u0_ss))
+    eta0 = float(fan_efficiency(x0[0]))
+    constraint_val0 = float(compute_total_heat(x0[1], x0[2], x0[3])) - 10.0
+    grad_obj0 = gradient_wrapper(x0)
+    
+    x_path.append(x0.copy())
+    objective_history.append(obj_val0)
+    max_T_history.append(max_T0)
+    eta_history.append(eta0)
+    constraint_history.append(constraint_val0)
+    grad_obj_history.append(np.linalg.norm(grad_obj0))
+    
+    print(f"\nInitial (Iter 0): obj={obj_val0:.6f}, maxT={max_T0-273:.2f}°C, "
+          f"η={eta0:.4f}, |∇f|={np.linalg.norm(grad_obj0):.2e}")
+    
     # Run optimization with JAX gradients
     print("\nStarting optimization with JAX AD gradients (SLSQP)...")
     
@@ -634,10 +655,40 @@ def run_optimization():
         options={'maxiter': 500, 'ftol': 1e-8, 'disp': True}
     )
     
-    # Final solution
+    # Final solution - use FD solver from heat_eq_2D_opt.py for verification
     x_opt = result.x
-    u_opt = solve_steady_state(x_opt[0], x_opt[1], x_opt[2], x_opt[3])
-    max_T_opt = float(jnp.max(u_opt))
+    
+    # Set up FD solver with same parameters as heat_eq_2D_opt.py
+    def initial_condition_fd(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Initial condition matching heat_eq_2D_opt.py"""
+        r, c = x.shape
+        u = np.zeros([r, c])
+        u = 70 * np.sin(x * np.pi / CPU_X) * np.sin(y * np.pi / CPU_Y) + EXT_T
+        return u
+    
+    def heat_generation_function_fd(x: np.ndarray, y: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
+        """Heat generation function matching heat_eq_2D_opt.py"""
+        return a * x + b * y + c
+    
+    # Create FD solver instance
+    heq_fd = HeatEquation2D(
+        CPU_X, CPU_Y, CPU_Z, N, N,
+        k=K_SI, rho=RHO_SI, cp=C_SI,
+        CFL=0.5,  # Match heat_eq_2D_opt.py
+        init_condition=initial_condition_fd
+    )
+    heq_fd.max_iter = 5E5
+    heq_fd.verbose = False
+    
+    # Set optimal design variables
+    heq_fd.set_fan_velocity(x_opt[0])
+    heq_fd.set_heat_generation(heat_generation_function_fd, x_opt[1], x_opt[2], x_opt[3])
+    heq_fd.reset()
+    heq_fd.solve_until_steady_state(tol=1e-3)  # Match heat_eq_2D_opt.py tolerance
+    
+    # Use FD solution for final results
+    u_opt_fd = heq_fd.u  # FD solution
+    max_T_opt = float(np.max(u_opt_fd))
     eta_opt = float(fan_efficiency(x_opt[0]))
     obj_opt = float(objective_jit(jnp.array(x_opt)))
     
@@ -772,14 +823,14 @@ def run_optimization():
     plt.savefig('plots/design_vars_AD.png', dpi=150)
     plt.close()
     
-    # 7. Optimal Temperature Distribution
+    # 7. Optimal Temperature Distribution (using FD solver)
     fig, ax = plt.subplots(figsize=(8, 6))
-    contour = ax.contourf(X * 1000, Y * 1000, u_opt - 273, levels=20, cmap='hot')
+    contour = ax.contourf(heq_fd.X * 1000, heq_fd.Y * 1000, u_opt_fd - 273, levels=20, cmap='hot')
     cbar = fig.colorbar(contour, ax=ax)
     cbar.set_label('Temperature [°C]')
     ax.set_xlabel('x [mm]')
     ax.set_ylabel('y [mm]')
-    ax.set_title('Optimal Steady-State Temperature Distribution (JAX AD)')
+    ax.set_title('Optimal Steady-State Temperature Distribution (FD Solver)')
     ax.set_aspect('equal')
     plt.tight_layout()
     plt.savefig('plots/optimal_temperature_AD.png', dpi=150)

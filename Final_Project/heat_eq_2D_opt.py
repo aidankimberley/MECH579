@@ -3,6 +3,7 @@ import numpy as np # numpy for vectorization
 from collections.abc import Callable # For type hints
 import matplotlib.pyplot as plt
 from scipy import optimize
+import argparse
 
 
 OPTIMIZATION_METHOD = 'trust-constr'
@@ -335,6 +336,16 @@ class HeatEquation2D:
 
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Heat equation optimization with Pareto front generation')
+    parser.add_argument('--skip-initial', action='store_true',
+                       help='Skip the initial optimization and only generate Pareto front')
+    parser.add_argument('--pareto-only', action='store_true',
+                       help='Only generate Pareto front (alias for --skip-initial)')
+    args = parser.parse_args()
+    
+    skip_initial = args.skip_initial or args.pareto_only
+    
     # Physical Dimensions
     cpu_x = 0.04  # m
     cpu_y = 0.04  # m
@@ -492,191 +503,313 @@ if __name__ == "__main__":
     x0 = [v0, a0, b0, c0]
     heq.verbose = False
     
-    print(f"Initial guess: v={v0} m/s, a={a0}, b={b0}, c={c0}")
-    print(f"Starting optimization with w1={w1}, w2={w2}...")
-    print("-" * 50)
-    ## Optimize
-    optimization_result = optimize.minimize(
-        objective_function,
-        method=OPTIMIZATION_METHOD,
-        x0=x0,
-        bounds=bounds,
-        constraints=constraints,
-        callback=callback,
-        options={'maxiter': 500, 'verbose': 2}
-    )
-    ## Build and evaluate optimal solution
-    heq.set_fan_velocity(optimization_result.x[0])
-    heq.set_heat_generation(heat_generation_function, optimization_result.x[1], optimization_result.x[2],
-                            optimization_result.x[3])
-    heq.reset()
-    heq.solve_until_steady_state(tol=global_tolerance)
+    if not skip_initial:
+        print(f"Initial guess: v={v0} m/s, a={a0}, b={b0}, c={c0}")
+        print(f"Starting optimization with w1={w1}, w2={w2}...")
+        print("-" * 50)
+        ## Optimize
+        optimization_result = optimize.minimize(
+            objective_function,
+            method=OPTIMIZATION_METHOD,
+            x0=x0,
+            bounds=bounds,
+            constraints=constraints,
+            callback=callback,
+            options={'maxiter': 500, 'verbose': 2}
+        )
+        ## Build and evaluate optimal solution
+        heq.set_fan_velocity(optimization_result.x[0])
+        heq.set_heat_generation(heat_generation_function, optimization_result.x[1], optimization_result.x[2],
+                                optimization_result.x[3])
+        heq.reset()
+        heq.solve_until_steady_state(tol=global_tolerance)
+        
+        optimal_max_T = np.max(heq.u)
+        optimal_eta = heq.fan_efficiency
+        optimal_obj = w1 * optimal_max_T - w2 * optimal_eta
+        
+        print("\n" + "=" * 50)
+        print("OPTIMIZATION RESULTS")
+        print("=" * 50)
+        print(f"Converged: {optimization_result.success}")
+        print(f"Message: {optimization_result.message}")
+        print(f"Number of iterations: {optimization_result.nit}")
+        print("-" * 50)
+        print("Optimal Design Variables:")
+        print(f"  v (fan velocity)   = {optimization_result.x[0]:.4f} m/s")
+        print(f"  a (heat coeff)     = {optimization_result.x[1]:.4f} W/m⁴")
+        print(f"  b (heat coeff)     = {optimization_result.x[2]:.4f} W/m⁴")
+        print(f"  c (heat coeff)     = {optimization_result.x[3]:.4f} W/m³")
+        print("-" * 50)
+        print("Objective Function Components:")
+        print(f"  Max Temperature    = {optimal_max_T:.2f} K ({optimal_max_T - 273:.2f} °C)")
+        print(f"  Fan Efficiency η   = {optimal_eta:.4f}")
+        print(f"  Objective Value    = {optimal_obj:.6f}")
+        print("-" * 50)
+        print("Constraint Satisfaction:")
+        print(f"  Total Heat Gen.    = {heq.heat_generation_total:.4f} W (target: 10 W)")
+        print(f"  Constraint Error   = {heq.heat_generation_total - 10:.6f} W")
+        print("=" * 50)
+
+        # Convert tracking lists to numpy arrays
+        x_path = np.array(x_path)
+        iterations = np.arange(len(x_path))
+        
+        v_path = x_path[:, 0]
+        a_path = x_path[:, 1]
+        b_path = x_path[:, 2]
+        c_path = x_path[:, 3]
+        
+        norm_grad_l = np.array(norm_grad_l)
+        norm_grad_f = np.array(norm_grad_f)
+        objective_history = np.array(objective_history)
+        max_T_history = np.array(max_T_history)
+        eta_history = np.array(eta_history)
+        constraint_history = np.array(constraint_history)
+
+        # ========== Part (b) Required Plots ==========
+        
+        # 1. Gradient of Lagrangian Convergence (skip if no gradient data available)
+        if not np.all(np.isnan(norm_grad_l)):
+            plt.figure(figsize=(8, 5))
+            plt.semilogy(iterations, norm_grad_l, 'b-', linewidth=1.5)
+            plt.xlabel('Iteration')
+            plt.ylabel(r'$\|\nabla \mathcal{L}\|$')
+            plt.title('Convergence of Gradient of Lagrangian')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig('gradient_lagrangian.png', dpi=150)
+            plt.show()
+        else:
+            print("Note: Gradient of Lagrangian not available for SLSQP method")
+
+        # 2. Objective Function Convergence
+        plt.figure(figsize=(8, 5))
+        plt.plot(iterations, objective_history, 'r-', linewidth=1.5)
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\omega_1 \max(T) - \omega_2 \eta$')
+        plt.title('Objective Function vs Iteration')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('objective_function.png', dpi=150)
+        plt.show()
+
+        # 3. Maximum Temperature
+        plt.figure(figsize=(8, 5))
+        plt.plot(iterations, max_T_history - 273, 'g-', linewidth=1.5)  # Convert to Celsius
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\max(T)$ [°C]')
+        plt.title('Maximum Temperature vs Iteration')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('max_temperature.png', dpi=150)
+        plt.show()
+
+        # 4. Fan Efficiency
+        plt.figure(figsize=(8, 5))
+        plt.plot(iterations, eta_history, 'm-', linewidth=1.5)
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\eta$')
+        plt.title('Fan Efficiency vs Iteration')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('fan_efficiency.png', dpi=150)
+        plt.show()
+
+        # 5. Total Power Generation Constraint
+        plt.figure(figsize=(8, 5))
+        plt.plot(iterations, constraint_history, 'c-', linewidth=1.5)
+        plt.axhline(y=0, color='k', linestyle='--', linewidth=0.8, label='Constraint = 0')
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$\int\!\!\int\!\!\int f(x,y)\,dV - 10$ [W]')
+        plt.title('Total Power Generation Constraint vs Iteration')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('power_constraint.png', dpi=150)
+        plt.show()
+
+        # 6. Design Parameters: Fan Velocity v
+        plt.figure(figsize=(8, 5))
+        plt.plot(iterations, v_path, 'b-', linewidth=1.5)
+        plt.xlabel('Iteration')
+        plt.ylabel(r'$v$ [m/s]')
+        plt.title('Fan Velocity vs Iteration')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('velocity_path.png', dpi=150)
+        plt.show()
+
+        # 7. Design Parameters: a, b, c
+        fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+        
+        axes[0].plot(iterations, a_path, 'r-', linewidth=1.5)
+        axes[0].set_ylabel(r'$a$ [W/m$^4$]')
+        axes[0].set_title('Heat Generation Parameters vs Iteration')
+        axes[0].grid(True, alpha=0.3)
+        
+        axes[1].plot(iterations, b_path, 'g-', linewidth=1.5)
+        axes[1].set_ylabel(r'$b$ [W/m$^4$]')
+        axes[1].grid(True, alpha=0.3)
+        
+        axes[2].plot(iterations, c_path, 'b-', linewidth=1.5)
+        axes[2].set_xlabel('Iteration')
+        axes[2].set_ylabel(r'$c$ [W/m$^3$]')
+        axes[2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('abc_parameters.png', dpi=150)
+        plt.show()
+
+        # 8. Optimal Temperature Distribution
+        fig, ax = plt.subplots(figsize=(8, 6))
+        contour = ax.contourf(heq.X * 1000, heq.Y * 1000, heq.u - 273, levels=20, cmap='hot')
+        cbar = fig.colorbar(contour, ax=ax)
+        cbar.set_label('Temperature [°C]')
+        ax.set_xlabel('x [mm]')
+        ax.set_ylabel('y [mm]')
+        ax.set_title('Optimal Steady-State Temperature Distribution')
+        ax.set_aspect('equal')
+        plt.tight_layout()
+        plt.savefig('optimal_temperature_distribution.png', dpi=150)
+        plt.show()
+
+        # 9. Gradient of Objective Function (skip if no gradient data available)
+        if not np.all(np.isnan(norm_grad_f)):
+            plt.figure(figsize=(8, 5))
+            plt.semilogy(iterations, norm_grad_f, 'k-', linewidth=1.5)
+            plt.xlabel('Iteration')
+            plt.ylabel(r'$\|\nabla f\|$')
+            plt.title('Convergence of Gradient of Objective Function')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig('gradient_objective.png', dpi=150)
+            plt.show()
+        else:
+            print("Note: Gradient of objective not available for SLSQP method")
+
+        print("\nAll plots saved to current directory.")
+    else:
+        print("Skipping initial optimization (use --skip-initial flag)...")
+
+    # ========== Pareto Front Generation ==========
+    print("\n" + "=" * 50)
+    print("GENERATING PARETO FRONT")
+    print("=" * 50)
     
-    optimal_max_T = np.max(heq.u)
-    optimal_eta = heq.fan_efficiency
-    optimal_obj = w1 * optimal_max_T - w2 * optimal_eta
+    # Different weight combinations for Pareto front
+    w1_values = [0.001, 0.5,.999]  # Three different weightings
+    pareto_max_T = []
+    pareto_eta = []
+    pareto_v = []
+    pareto_w1 = []
+    
+    # Store original w1 for later use
+    original_w1 = w1
+    
+    for w1_pareto in w1_values:
+        w2_pareto = 1 - w1_pareto
+        print(f"\nOptimizing with w1={w1_pareto}, w2={w2_pareto}...")
+        
+        # Update global w1 and w2 for objective function
+        w1 = w1_pareto
+        w2 = w2_pareto
+        
+        # Run optimization with current weights
+        result_pareto = optimize.minimize(
+            objective_function,
+            method=OPTIMIZATION_METHOD,
+            x0=x0,  # Use same initial guess
+            bounds=bounds,
+            constraints=constraints,
+            options={'maxiter': 200, 'verbose': 0}  # Reduced verbosity
+        )
+        
+        # Extract optimal solution
+        v_opt = result_pareto.x[0]
+        a_opt = result_pareto.x[1]
+        b_opt = result_pareto.x[2]
+        c_opt = result_pareto.x[3]
+        
+        # Evaluate at optimal point
+        heq.set_fan_velocity(v_opt)
+        heq.set_heat_generation(heat_generation_function, a_opt, b_opt, c_opt)
+        heq.reset()
+        heq.solve_until_steady_state(tol=global_tolerance)
+        
+        max_T_opt = np.max(heq.u)
+        eta_opt = heq.fan_efficiency
+        
+        pareto_max_T.append(max_T_opt)
+        pareto_eta.append(eta_opt)
+        pareto_v.append(v_opt)
+        pareto_w1.append(w1_pareto)
+        
+        print(f"  Optimal: max_T={max_T_opt-273:.2f}°C, η={eta_opt:.4f}, v={v_opt:.2f} m/s")
+    
+    # Restore original w1
+    w1 = original_w1
+    w2 = 1 - w1
+    
+    # Convert to numpy arrays
+    pareto_max_T = np.array(pareto_max_T)
+    pareto_eta = np.array(pareto_eta)
+    pareto_v = np.array(pareto_v)
+    pareto_w1 = np.array(pareto_w1)
+    
+    # Plot Pareto Front
+    plt.figure(figsize=(10, 7))
+    
+    # Plot Pareto points
+    scatter = plt.scatter(pareto_max_T - 273, pareto_eta, c=pareto_w1, 
+                         s=200, cmap='viridis', edgecolors='black', linewidths=2, zorder=5)
+    
+    # Add labels for each point
+    for i, w1_val in enumerate(pareto_w1):
+        plt.annotate(f'w1={w1_val:.1f}', 
+                    xy=(pareto_max_T[i] - 273, pareto_eta[i]),
+                    xytext=(10, 10), textcoords='offset points',
+                    fontsize=11, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
+    
+    # Connect points with lines to show Pareto front
+    # Sort by max_T for better visualization
+    sort_idx = np.argsort(pareto_max_T)
+    plt.plot(pareto_max_T[sort_idx] - 273, pareto_eta[sort_idx], 
+            'r--', linewidth=2, alpha=0.5, label='Pareto Front', zorder=3)
+    
+    # Colorbar for w1 values
+    cbar = plt.colorbar(scatter)
+    cbar.set_label(r'Weight $w_1$', fontsize=12, rotation=270, labelpad=20)
+    
+    # Labels and formatting
+    plt.xlabel(r'Maximum Temperature [°C]', fontsize=13, fontweight='bold')
+    plt.ylabel(r'Fan Efficiency $\eta$', fontsize=13, fontweight='bold')
+    plt.title('Pareto Front: Trade-off between Max Temperature and Fan Efficiency', 
+             fontsize=14, fontweight='bold')
+    plt.grid(True, alpha=0.3, linestyle='--')
+    plt.legend(fontsize=11, loc='best')
+    
+    # Annotations explaining the trade-off
+    plt.text(0.02, 0.98, 
+            'Lower w1 → Prioritize efficiency\nHigher w1 → Prioritize temperature',
+            transform=plt.gca().transAxes, fontsize=10,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.savefig('pareto_front.png', dpi=150, bbox_inches='tight')
+    plt.show()
     
     print("\n" + "=" * 50)
-    print("OPTIMIZATION RESULTS")
+    print("PARETO FRONT SUMMARY")
     print("=" * 50)
-    print(f"Converged: {optimization_result.success}")
-    print(f"Message: {optimization_result.message}")
-    print(f"Number of iterations: {optimization_result.nit}")
-    print("-" * 50)
-    print("Optimal Design Variables:")
-    print(f"  v (fan velocity)   = {optimization_result.x[0]:.4f} m/s")
-    print(f"  a (heat coeff)     = {optimization_result.x[1]:.4f} W/m⁴")
-    print(f"  b (heat coeff)     = {optimization_result.x[2]:.4f} W/m⁴")
-    print(f"  c (heat coeff)     = {optimization_result.x[3]:.4f} W/m³")
-    print("-" * 50)
-    print("Objective Function Components:")
-    print(f"  Max Temperature    = {optimal_max_T:.2f} K ({optimal_max_T - 273:.2f} °C)")
-    print(f"  Fan Efficiency η   = {optimal_eta:.4f}")
-    print(f"  Objective Value    = {optimal_obj:.6f}")
-    print("-" * 50)
-    print("Constraint Satisfaction:")
-    print(f"  Total Heat Gen.    = {heq.heat_generation_total:.4f} W (target: 10 W)")
-    print(f"  Constraint Error   = {heq.heat_generation_total - 10:.6f} W")
+    print(f"{'w1':>6} | {'w2':>6} | {'Max T [°C]':>12} | {'Efficiency':>11} | {'v [m/s]':>10}")
+    print("-" * 60)
+    for i in range(len(pareto_w1)):
+        print(f"{pareto_w1[i]:6.1f} | {1-pareto_w1[i]:6.1f} | {pareto_max_T[i]-273:12.2f} | {pareto_eta[i]:11.4f} | {pareto_v[i]:10.2f}")
     print("=" * 50)
-
-    # Convert tracking lists to numpy arrays
-    x_path = np.array(x_path)
-    iterations = np.arange(len(x_path))
-    
-    v_path = x_path[:, 0]
-    a_path = x_path[:, 1]
-    b_path = x_path[:, 2]
-    c_path = x_path[:, 3]
-    
-    norm_grad_l = np.array(norm_grad_l)
-    norm_grad_f = np.array(norm_grad_f)
-    objective_history = np.array(objective_history)
-    max_T_history = np.array(max_T_history)
-    eta_history = np.array(eta_history)
-    constraint_history = np.array(constraint_history)
-
-    # ========== Part (b) Required Plots ==========
-    
-    # 1. Gradient of Lagrangian Convergence (skip if no gradient data available)
-    if not np.all(np.isnan(norm_grad_l)):
-        plt.figure(figsize=(8, 5))
-        plt.semilogy(iterations, norm_grad_l, 'b-', linewidth=1.5)
-        plt.xlabel('Iteration')
-        plt.ylabel(r'$\|\nabla \mathcal{L}\|$')
-        plt.title('Convergence of Gradient of Lagrangian')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig('gradient_lagrangian.png', dpi=150)
-        plt.show()
-    else:
-        print("Note: Gradient of Lagrangian not available for SLSQP method")
-
-    # 2. Objective Function Convergence
-    plt.figure(figsize=(8, 5))
-    plt.plot(iterations, objective_history, 'r-', linewidth=1.5)
-    plt.xlabel('Iteration')
-    plt.ylabel(r'$\omega_1 \max(T) - \omega_2 \eta$')
-    plt.title('Objective Function vs Iteration')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('objective_function.png', dpi=150)
-    plt.show()
-
-    # 3. Maximum Temperature
-    plt.figure(figsize=(8, 5))
-    plt.plot(iterations, max_T_history - 273, 'g-', linewidth=1.5)  # Convert to Celsius
-    plt.xlabel('Iteration')
-    plt.ylabel(r'$\max(T)$ [°C]')
-    plt.title('Maximum Temperature vs Iteration')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('max_temperature.png', dpi=150)
-    plt.show()
-
-    # 4. Fan Efficiency
-    plt.figure(figsize=(8, 5))
-    plt.plot(iterations, eta_history, 'm-', linewidth=1.5)
-    plt.xlabel('Iteration')
-    plt.ylabel(r'$\eta$')
-    plt.title('Fan Efficiency vs Iteration')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('fan_efficiency.png', dpi=150)
-    plt.show()
-
-    # 5. Total Power Generation Constraint
-    plt.figure(figsize=(8, 5))
-    plt.plot(iterations, constraint_history, 'c-', linewidth=1.5)
-    plt.axhline(y=0, color='k', linestyle='--', linewidth=0.8, label='Constraint = 0')
-    plt.xlabel('Iteration')
-    plt.ylabel(r'$\int\!\!\int\!\!\int f(x,y)\,dV - 10$ [W]')
-    plt.title('Total Power Generation Constraint vs Iteration')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('power_constraint.png', dpi=150)
-    plt.show()
-
-    # 6. Design Parameters: Fan Velocity v
-    plt.figure(figsize=(8, 5))
-    plt.plot(iterations, v_path, 'b-', linewidth=1.5)
-    plt.xlabel('Iteration')
-    plt.ylabel(r'$v$ [m/s]')
-    plt.title('Fan Velocity vs Iteration')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig('velocity_path.png', dpi=150)
-    plt.show()
-
-    # 7. Design Parameters: a, b, c
-    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
-    
-    axes[0].plot(iterations, a_path, 'r-', linewidth=1.5)
-    axes[0].set_ylabel(r'$a$ [W/m$^4$]')
-    axes[0].set_title('Heat Generation Parameters vs Iteration')
-    axes[0].grid(True, alpha=0.3)
-    
-    axes[1].plot(iterations, b_path, 'g-', linewidth=1.5)
-    axes[1].set_ylabel(r'$b$ [W/m$^4$]')
-    axes[1].grid(True, alpha=0.3)
-    
-    axes[2].plot(iterations, c_path, 'b-', linewidth=1.5)
-    axes[2].set_xlabel('Iteration')
-    axes[2].set_ylabel(r'$c$ [W/m$^3$]')
-    axes[2].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig('abc_parameters.png', dpi=150)
-    plt.show()
-
-    # 8. Optimal Temperature Distribution
-    fig, ax = plt.subplots(figsize=(8, 6))
-    contour = ax.contourf(heq.X * 1000, heq.Y * 1000, heq.u - 273, levels=20, cmap='hot')
-    cbar = fig.colorbar(contour, ax=ax)
-    cbar.set_label('Temperature [°C]')
-    ax.set_xlabel('x [mm]')
-    ax.set_ylabel('y [mm]')
-    ax.set_title('Optimal Steady-State Temperature Distribution')
-    ax.set_aspect('equal')
-    plt.tight_layout()
-    plt.savefig('optimal_temperature_distribution.png', dpi=150)
-    plt.show()
-
-    # 9. Gradient of Objective Function (skip if no gradient data available)
-    if not np.all(np.isnan(norm_grad_f)):
-        plt.figure(figsize=(8, 5))
-        plt.semilogy(iterations, norm_grad_f, 'k-', linewidth=1.5)
-        plt.xlabel('Iteration')
-        plt.ylabel(r'$\|\nabla f\|$')
-        plt.title('Convergence of Gradient of Objective Function')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig('gradient_objective.png', dpi=150)
-        plt.show()
-    else:
-        print("Note: Gradient of objective not available for SLSQP method")
-
-    print("\nAll plots saved to current directory.")
+    print("\nPareto front plot saved as 'pareto_front.png'")
 
   
 
