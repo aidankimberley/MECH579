@@ -67,10 +67,6 @@ def heat_generation(X, Y, a, b, c):
 def compute_total_heat(a, b, c):
     """Compute total heat generation using trapezoidal rule.
     
-    NOTE: This matches Callum's implementation which has a quirk:
-    - Rows 0 and N-1 are divided by 2 twice (effectively by 4)
-    - Columns 0 and N-1 are NOT divided (except at corners)
-    This is needed to match Callum's optimization results.
     """
     q = heat_generation(X, Y, a, b, c) * dx * dy * CPU_Z
     i0, iN, j0, jN = 0, N - 1, 0, N - 1
@@ -131,7 +127,6 @@ def initial_condition():
 def step_forward(u, X_grid, Y_grid, params):
     """Single time step update - pure function, returns new u.
     
-    This signature matches Callum's step_forward_jax exactly:
     - u: current temperature field
     - X_grid, Y_grid: mesh grids (passed explicitly, not as closures)
     - params: dictionary with 'v', 'a', 'b', 'c' keys
@@ -266,8 +261,7 @@ def step_forward(u, X_grid, Y_grid, params):
 def run_solver(u0, X_grid, Y_grid, params, n_steps):
     """
     JIT-compiled solver that runs n_steps of the heat equation.
-    
-    This structure EXACTLY matches Callum's run_solver_jax:
+
     - params is a TRACED argument (not static), so JAX can differentiate through it
     - n_steps is STATIC (position 4), so JAX compiles for each different value
     - body_fun closes over params, but since params is traced by this JIT'd function,
@@ -335,7 +329,6 @@ def objective_function(x):
     
     x = [v, a, b, c]
     
-    Uses tuple unpacking like Callum's working code.
     """
     v, a, b, c = x 
 
