@@ -4,7 +4,7 @@ JAX-differentiable 2D Heat Equation Solver for MECH 579 Final Project
 This version is fully functional (no class mutation) so JAX can trace through
 and compute gradients via automatic differentiation.
 """
-
+# %%
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -583,9 +583,9 @@ def run_optimization():
         
         return False  # Don't stop optimization
     
-    # Initial guess - matching Callum's
+    # Initial guess
     v0 = 10.0
-    x0_heat = 0.0  # Callum uses 0.0
+    x0_heat = 0.0 
     a0 = x0_heat * 1e5
     b0 = x0_heat * 1e5
     c0 = 156250.0 - 0.02 * a0 - 0.02 * b0
@@ -866,7 +866,7 @@ def compare_convergence(v, a, b, c):
     
     # Check convergence at different iteration counts
     print(f"\nConvergence at different iteration counts:")
-    for n_iter in [5000, 10000, 20000, 50000, MAX_ITER]:
+    for n_iter in np.linspace(500, MAX_ITER, 5):
         if n_iter <= MAX_ITER:
             u_test, err_test = solve_steady_state_with_error(v, a, b, c, num_iter=n_iter)
             max_T_test = float(jnp.max(u_test))
@@ -888,6 +888,7 @@ def compare_convergence(v, a, b, c):
     return u_jax, error_jax
 
 
+# %%
 # ============================================================================
 # Main
 # ============================================================================
@@ -952,3 +953,5 @@ if __name__ == "__main__":
         print("="*60)
         print("\nTo run optimization, use: python jax_ad_heat.py --optimize")
 
+
+# %%
